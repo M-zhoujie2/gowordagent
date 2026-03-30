@@ -36,6 +36,15 @@ namespace GOWordAgentAddIn
         private static readonly SolidColorBrush _textPrimaryColor = CreateFrozenBrush(34, 34, 34);
         private static readonly SolidColorBrush _textSecondaryColor = CreateFrozenBrush(153, 153, 153);
         
+        // 校对结果按钮复用画刷
+        private static readonly SolidColorBrush _issueButtonBgBrush = CreateFrozenBrush(250, 250, 250);
+        private static readonly SolidColorBrush _issueButtonBorderBrush = CreateFrozenBrush(220, 220, 220);
+        private static readonly SolidColorBrush _separatorBrush = CreateFrozenBrush(200, 200, 200);
+        private static readonly SolidColorBrush _innerSeparatorBrush = CreateFrozenBrush(230, 230, 230);
+        private static readonly SolidColorBrush _severityMediumBrush = CreateFrozenBrush(255, 152, 0);
+        private static readonly SolidColorBrush _modifiedLabelBrush = CreateFrozenBrush(0, 150, 0);
+        private static readonly SolidColorBrush _modifiedTextBrush = CreateFrozenBrush(0, 120, 0);
+        
         
         /// <summary>
         /// 创建冻结的 SolidColorBrush（提高性能，允许跨线程使用）
@@ -683,6 +692,28 @@ namespace GOWordAgentAddIn
 
         private async Task DoStartProofreadInternal()
         {
+            // 检查隐私提示（每天第一次使用时弹出）
+            string today = DateTime.Now.ToString("yyyy-MM-dd");
+            if (ConfigManager.CurrentConfig.PrivacyConsentLastShownDate != today)
+            {
+                bool? result = await Dispatcher.InvokeAsync<bool?>(() =>
+                {
+                    var dialog = new PrivacyConsentDialog();
+                    return dialog.ShowDialog();
+                }).Task;
+
+                if (result != true)
+                {
+                    // 用户不同意，取消校对
+                    AddMessageBubble("系统", "您已取消校对。请了解隐私风险后再使用 AI 校对功能。", false);
+                    return;
+                }
+
+                // 用户同意，保存今天的日期
+                ConfigManager.CurrentConfig.PrivacyConsentLastShownDate = today;
+                ConfigManager.SaveConfig(ConfigManager.CurrentConfig);
+            }
+
             if (_llmService == null)
             {
                 MessageBox.Show("请先点击「保存并连接」按钮连接大模型", "提示", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -954,7 +985,7 @@ namespace GOWordAgentAddIn
                 mainStack.Children.Add(new Separator 
                 { 
                     Margin = new Thickness(0, 8, 0, 4),
-                    Background = new SolidColorBrush(Color.FromRgb(200, 200, 200))
+                    Background = _separatorBrush
                 });
                 
                 // 问题列表标题
@@ -1016,8 +1047,8 @@ namespace GOWordAgentAddIn
         {
             var button = new Button
             {
-                Background = new SolidColorBrush(Color.FromRgb(250, 250, 250)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(220, 220, 220)),
+                Background = _issueButtonBgBrush,
+                BorderBrush = _issueButtonBorderBrush,
                 BorderThickness = new Thickness(1),
                 Padding = new Thickness(10, 8, 10, 8),
                 Margin = new Thickness(0, 0, 0, 6),
@@ -1038,7 +1069,7 @@ namespace GOWordAgentAddIn
                 if (item.Severity.Contains("高") || item.Severity.Contains("严重"))
                     severityBrush = Brushes.Red;
                 else if (item.Severity.Contains("中"))
-                    severityBrush = new SolidColorBrush(Color.FromRgb(255, 152, 0));
+                    severityBrush = _severityMediumBrush;
                 else if (item.Severity.Contains("低"))
                     severityBrush = Brushes.Green;
             }
@@ -1078,7 +1109,7 @@ namespace GOWordAgentAddIn
             contentStack.Children.Add(new Separator 
             { 
                 Margin = new Thickness(0, 4, 0, 4),
-                Background = new SolidColorBrush(Color.FromRgb(230, 230, 230))
+                Background = _innerSeparatorBrush
             });
             
             // 原文
@@ -1107,7 +1138,7 @@ namespace GOWordAgentAddIn
                 Text = "修改：",
                 FontSize = 10,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(Color.FromRgb(0, 150, 0))
+                Foreground = _modifiedLabelBrush
             };
             contentStack.Children.Add(modifiedLabel);
             
@@ -1115,7 +1146,7 @@ namespace GOWordAgentAddIn
             {
                 Text = item.Modified,
                 FontSize = 11,
-                Foreground = new SolidColorBrush(Color.FromRgb(0, 120, 0)),
+                Foreground = _modifiedTextBrush,
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(8, 0, 0, 6)
             };

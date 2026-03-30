@@ -14,12 +14,31 @@ namespace GOWordAgentAddIn
     /// </summary>
     public class ProofreadResultRenderer
     {
+        // 静态复用的画刷 - 避免高频创建导致 GC 压力
+        private static readonly SolidColorBrush _separatorBrush = CreateFrozenBrush(200, 200, 200);
+        private static readonly SolidColorBrush _buttonBackgroundBrush = CreateFrozenBrush(250, 250, 250);
+        private static readonly SolidColorBrush _buttonBorderBrush = CreateFrozenBrush(220, 220, 220);
+        private static readonly SolidColorBrush _innerSeparatorBrush = CreateFrozenBrush(230, 230, 230);
+        private static readonly SolidColorBrush _modifiedTextBrush = CreateFrozenBrush(0, 120, 0);
+        private static readonly SolidColorBrush _modifiedLabelBrush = CreateFrozenBrush(0, 150, 0);
+        private static readonly SolidColorBrush _severityMediumBrush = CreateFrozenBrush(255, 152, 0);
+
         private readonly Panel _messagesPanel;
         private readonly ScrollViewer _scrollViewer;
         private readonly SolidColorBrush _aiBubbleColor;
         private readonly SolidColorBrush _textPrimaryColor;
         private readonly SolidColorBrush _textSecondaryColor;
         private readonly Action<ProofreadIssueItem> _navigateAction;
+
+        /// <summary>
+        /// 创建冻结的画刷（线程安全，可复用）
+        /// </summary>
+        private static SolidColorBrush CreateFrozenBrush(byte r, byte g, byte b)
+        {
+            var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+            brush.Freeze();
+            return brush;
+        }
 
         public ProofreadResultRenderer(Panel messagesPanel, ScrollViewer scrollViewer,
             SolidColorBrush aiBubbleColor, SolidColorBrush textPrimaryColor, SolidColorBrush textSecondaryColor,
@@ -150,7 +169,7 @@ namespace GOWordAgentAddIn
             mainStack.Children.Add(new Separator 
             { 
                 Margin = new Thickness(0, 8, 0, 4),
-                Background = new SolidColorBrush(Color.FromRgb(200, 200, 200))
+                Background = _separatorBrush
             });
             
             // 问题列表标题
@@ -193,8 +212,8 @@ namespace GOWordAgentAddIn
         {
             var button = new Button
             {
-                Background = new SolidColorBrush(Color.FromRgb(250, 250, 250)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(220, 220, 220)),
+                Background = _buttonBackgroundBrush,
+                BorderBrush = _buttonBorderBrush,
                 BorderThickness = new Thickness(1),
                 Padding = new Thickness(10, 8, 10, 8),
                 Margin = new Thickness(0, 0, 0, 6),
@@ -246,14 +265,14 @@ namespace GOWordAgentAddIn
             contentStack.Children.Add(new Separator 
             { 
                 Margin = new Thickness(0, 4, 0, 4),
-                Background = new SolidColorBrush(Color.FromRgb(230, 230, 230))
+                Background = _innerSeparatorBrush
             });
             
             // 原文
             AddLabeledText(contentStack, "原文：", item.Original, _textSecondaryColor, 8);
             
             // 修改
-            AddLabeledText(contentStack, "修改：", item.Modified, new SolidColorBrush(Color.FromRgb(0, 120, 0)), 8, true);
+            AddLabeledText(contentStack, "修改：", item.Modified, _modifiedTextBrush, 8, true);
             
             // 理由
             AddLabeledText(contentStack, "理由：", item.Reason, _textSecondaryColor, 0);
@@ -277,7 +296,7 @@ namespace GOWordAgentAddIn
             if (severity.Contains("高") || severity.Contains("严重"))
                 return Brushes.Red;
             else if (severity.Contains("中"))
-                return new SolidColorBrush(Color.FromRgb(255, 152, 0));
+                return _severityMediumBrush;
             else if (severity.Contains("低"))
                 return Brushes.Green;
                 
@@ -295,7 +314,7 @@ namespace GOWordAgentAddIn
                 Text = label,
                 FontSize = 10,
                 FontWeight = FontWeights.SemiBold,
-                Foreground = isModified ? new SolidColorBrush(Color.FromRgb(0, 150, 0)) : labelColor
+                Foreground = isModified ? _modifiedLabelBrush : labelColor
             };
             parent.Children.Add(labelBlock);
             
@@ -303,7 +322,7 @@ namespace GOWordAgentAddIn
             {
                 Text = text,
                 FontSize = isModified ? 11 : (label == "理由：" ? 10 : 11),
-                Foreground = isModified ? new SolidColorBrush(Color.FromRgb(0, 120, 0)) : 
+                Foreground = isModified ? _modifiedTextBrush : 
                     (label == "理由：" ? labelColor : _textPrimaryColor),
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(8, 0, 0, bottomMargin)

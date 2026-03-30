@@ -1,5 +1,8 @@
 using System;
 using System.IO;
+using System.Reflection;
+using System.Windows;
+using System.Windows.Media;
 
 namespace GOWordAgentAddIn
 {
@@ -18,6 +21,9 @@ namespace GOWordAgentAddIn
 
         private void ThisAddIn_Startup(object sender, EventArgs e)
         {
+            // 配置 WPF DPI 感知 - 修复 MaterialDesign 在高分辨率屏幕的模糊问题
+            ConfigureDpiAwareness();
+            
             Current = this;
             
             _paneHost = new GOWordAgentPaneHost();
@@ -51,6 +57,44 @@ namespace GOWordAgentAddIn
                 disposable.Dispose();
             }
         }
+
+        #region DPI 感知配置
+
+        /// <summary>
+        /// 配置 WPF DPI 感知 - 修复 MaterialDesign 在高分辨率屏幕的模糊问题
+        /// </summary>
+        private static void ConfigureDpiAwareness()
+        {
+            try
+            {
+                // 设置进程级 DPI 感知（如果尚未设置）
+                // 注意：对于 VSTO 外接程序，DPI 感知主要由宿主应用程序（Word）决定
+                // 但我们可以通过 WPF 的 API 优化渲染
+                
+                // 禁用 WPF 的 DPI 缩放（让 Windows 处理）
+                // 这可以防止 MaterialDesign 控件在高 DPI 下出现模糊
+                // 注意：RenderMode 不是公开 API，跳过此设置
+                System.Diagnostics.Debug.WriteLine($"[ThisAddIn] 渲染层级: {RenderCapability.Tier >> 16}");
+                
+                // 设置 TextOptions 以改善文本清晰度
+                TextOptions.TextFormattingModeProperty.OverrideMetadata(
+                    typeof(Window),
+                    new FrameworkPropertyMetadata(TextFormattingMode.Display));
+                
+                TextOptions.TextHintingModeProperty.OverrideMetadata(
+                    typeof(Window),
+                    new FrameworkPropertyMetadata(TextHintingMode.Auto));
+                
+                System.Diagnostics.Debug.WriteLine("[ThisAddIn] DPI 感知配置完成");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ThisAddIn] DPI 感知配置失败: {ex.Message}");
+                // 不影响主功能
+            }
+        }
+
+        #endregion
 
         #region VSTO 生成的代码
         private void InternalStartup()

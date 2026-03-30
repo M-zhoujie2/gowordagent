@@ -16,12 +16,45 @@ namespace GOWordAgentAddIn
         private readonly Word.Application _application;
         private readonly Word.Document _document;
         private bool _disposed;
+        private readonly int _wordVersion;
 
         public WordDocumentService(Word.Application application, Word.Document document)
         {
             _application = application ?? throw new ArgumentNullException(nameof(application));
             _document = document ?? throw new ArgumentNullException(nameof(document));
+            _wordVersion = GetWordVersion(application);
         }
+
+        /// <summary>
+        /// 获取 Word 版本（主版本号，如 16 表示 Word 2016/2019/365）
+        /// </summary>
+        private static int GetWordVersion(Word.Application application)
+        {
+            try
+            {
+                // Version 属性返回格式如 "16.0.12345.67890"，取主版本号
+                string versionString = application.Version;
+                if (!string.IsNullOrEmpty(versionString))
+                {
+                    var parts = versionString.Split('.');
+                    if (parts.Length > 0 && int.TryParse(parts[0], out int version))
+                    {
+                        return version;
+                    }
+                }
+            }
+            catch
+            {
+                // 忽略异常，返回默认值
+            }
+            return 16; // 默认假设为较新版本
+        }
+
+        /// <summary>
+        /// 检查当前 Word 版本是否支持特定功能
+        /// </summary>
+        private bool IsWord2013OrLater => _wordVersion >= 15;
+        private bool IsWord2010OrLater => _wordVersion >= 14;
 
         /// <summary>
         /// 获取当前活动文档的内容或选中的文本
@@ -286,19 +319,23 @@ namespace GOWordAgentAddIn
                     start = searchRange.Start;
                     end = searchRange.End;
 
-                    bool oldTrackRevisions = _document.TrackRevisions;
-                    try
+                    // 尝试使用修订模式（TrackRevisions），失败时降级为普通替换
+                    if (!TryApplyWithRevisions(searchRange, modified, commentText, out comment))
                     {
-                        _document.TrackRevisions = true;
+                        // 降级：不使用修订模式，直接替换
                         searchRange.Text = modified;
-                        comment = _document.Comments.Add(searchRange, commentText);
-                        end = searchRange.End;
-                        return true;
+                        try
+                        {
+                            comment = _document.Comments.Add(searchRange, commentText);
+                        }
+                        catch (COMException ex)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"[ApplyRevision] 添加批注失败: {ex.Message}");
+                            // 批注失败不影响主功能
+                        }
                     }
-                    finally
-                    {
-                        _document.TrackRevisions = oldTrackRevisions;
-                    }
+                    end = searchRange.End;
+                    return true;
                 }
             }
             finally
@@ -446,6 +483,49 @@ namespace GOWordAgentAddIn
         }
         
         /// <summary>
+        /// 尝试使用修订模式应用修改，失败时返回 false 让调用方降级处理
+        /// </summary>
+        private bool TryApplyWithRevisions(Word.Range range, string modified, string commentText, out Word.Comment comment)
+        {
+            comment = null;
+            try
+            {
+                bool oldTrackRevisions = _document.TrackRevisions;
+                try
+                {
+                    _document.TrackRevisions = true;
+                    range.Text = modified;
+                    try
+                    {
+                        comment = _document.Comments.Add(range, commentText);
+                    }
+                    catch (COMException ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[TryApplyWithRevisions] 添加批注失败: {ex.Message}");
+                        // 批注失败不影响主要修订功能
+                    }
+                    return true;
+                }
+                finally
+                {
+                    try
+                    {
+                        _document.TrackRevisions = oldTrackRevisions;
+                    }
+                    catch (COMException ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[TryApplyWithRevisions] 恢复 TrackRevisions 失败: {ex.Message}");
+                    }
+                }
+            }
+            catch (COMException ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[TryApplyWithRevisions] 修订模式不支持或失败: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
         /// 在指定范围内应用修订（使用确切位置）
         /// </summary>
         public bool ApplyRevisionAtRange(int start, int end, string original, string modified, string commentText, out int newStart, out int newEnd)
@@ -458,6 +538,7 @@ namespace GOWordAgentAddIn
             
             Word.Range range = null;
             Word.Comment comment = null;
+            Word.Find find = null;
             
             try
             {
@@ -469,7 +550,7 @@ namespace GOWordAgentAddIn
                 {
                     // 内容不匹配，尝试用 Find 在当前范围附近查找
                     // 使用整词匹配提高精度，避免短文本匹配错误
-                    Word.Find find = range.Find;
+                    find = range.Find;
                     bool isShortText = original?.Length <= 2;
                     
                     // 优先使用整词匹配
@@ -483,6 +564,7 @@ namespace GOWordAgentAddIn
                     // 短文本必须整词匹配，长文本可以放宽
                     if (!found && !isShortText && original?.Length > 5)
                     {
+                        Marshal.ReleaseComObject(find);
                         find = range.Find;
                         found = find.Execute(FindText: original, 
                                              MatchCase: false, 
@@ -492,28 +574,30 @@ namespace GOWordAgentAddIn
                                              Wrap: Word.WdFindWrap.wdFindStop);
                     }
                     
-                    Marshal.ReleaseComObject(find);
-                    
                     if (!found) return false;
                 }
                 
-                bool oldTrackRevisions = _document.TrackRevisions;
-                try
+                // 尝试使用修订模式，失败时降级
+                if (!TryApplyWithRevisions(range, modified, commentText, out comment))
                 {
-                    _document.TrackRevisions = true;
+                    // 降级：不使用修订模式
                     range.Text = modified;
-                    comment = _document.Comments.Add(range, commentText);
-                    newStart = range.Start;
-                    newEnd = range.End;
-                    return true;
+                    try
+                    {
+                        comment = _document.Comments.Add(range, commentText);
+                    }
+                    catch (COMException ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[ApplyRevisionAtRange] 添加批注失败: {ex.Message}");
+                    }
                 }
-                finally
-                {
-                    _document.TrackRevisions = oldTrackRevisions;
-                }
+                newStart = range.Start;
+                newEnd = range.End;
+                return true;
             }
             finally
             {
+                if (find != null) Marshal.ReleaseComObject(find);
                 if (comment != null) Marshal.ReleaseComObject(comment);
                 if (range != null) Marshal.ReleaseComObject(range);
             }
@@ -534,7 +618,18 @@ namespace GOWordAgentAddIn
                 range = _document.Range(start, end);
                 range.Select();
                 activeWindow = _application.ActiveWindow;
-                activeWindow.ScrollIntoView(range);
+                
+                // ScrollIntoView 在 Word 2010 部分版本可能不支持，添加保护
+                try
+                {
+                    activeWindow.ScrollIntoView(range);
+                }
+                catch (COMException ex)
+                {
+                    // Word 2010 可能不支持此方法，仅记录日志
+                    System.Diagnostics.Debug.WriteLine($"[NavigateToRange] ScrollIntoView 不支持或失败: {ex.Message}");
+                    // 仍视为成功，因为至少已选中目标位置
+                }
                 return true;
             }
             catch (Exception ex)
@@ -570,7 +665,16 @@ namespace GOWordAgentAddIn
                 {
                     searchRange.Select();
                     activeWindow = _application.ActiveWindow;
-                    activeWindow.ScrollIntoView(searchRange);
+                    
+                    // ScrollIntoView 在 Word 2010 部分版本可能不支持，添加保护
+                    try
+                    {
+                        activeWindow.ScrollIntoView(searchRange);
+                    }
+                    catch (COMException ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[NavigateBySearch] ScrollIntoView 不支持或失败: {ex.Message}");
+                    }
                     return true;
                 }
             }
@@ -712,6 +816,50 @@ namespace GOWordAgentAddIn
             if (!TryCreate(out var service, out var errorMessage))
                 throw new InvalidOperationException(errorMessage);
             return service;
+        }
+
+        /// <summary>
+        /// 为特定文档创建服务（支持多文档场景）
+        /// </summary>
+        public static bool TryCreateForDocument(Word.Application app, Word.Document document, 
+            out WordDocumentService service, out string errorMessage)
+        {
+            service = null;
+            errorMessage = null;
+
+            try
+            {
+                if (app == null)
+                {
+                    errorMessage = "无法访问 Word 应用";
+                    return false;
+                }
+
+                if (document == null)
+                {
+                    errorMessage = "文档为空";
+                    return false;
+                }
+
+                // 验证文档是否有效
+                try
+                {
+                    var _ = document.Content.Text;
+                }
+                catch (COMException)
+                {
+                    errorMessage = "文档已被释放，请重新打开";
+                    return false;
+                }
+
+                service = new WordDocumentService(app, document);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                errorMessage = ex.Message;
+                return false;
+            }
         }
     }
 }

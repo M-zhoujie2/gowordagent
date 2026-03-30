@@ -30,6 +30,12 @@ namespace GOWordAgentAddIn
         // 性能统计 - 使用 Interlocked 操作
         private int _cacheHitCount = 0;
 
+        // 用于优雅关闭的取消令牌源
+        private readonly CancellationTokenSource _disposeCts = new CancellationTokenSource();
+        
+        // 跟踪正在执行的任务数量
+        private long _activeTaskCount = 0;
+
         /// <summary>
         /// 进度更新事件（线程安全）
         /// </summary>
@@ -228,8 +234,14 @@ namespace GOWordAgentAddIn
         private async Task<ParagraphResult> ProcessParagraphAsync(string paragraph, int index, int total, 
             CancellationToken cancellationToken)
         {
-            await _semaphore.WaitAsync(cancellationToken);
-            var stopwatch = Stopwatch.StartNew();
+            // 组合外部取消令牌和 Dispose 取消令牌
+            using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCts.Token))
+            {
+                var linkedToken = linkedCts.Token;
+                await _semaphore.WaitAsync(linkedToken);
+                
+                Interlocked.Increment(ref _activeTaskCount);
+                var stopwatch = Stopwatch.StartNew();
             
             try
             {
@@ -256,29 +268,7 @@ namespace GOWordAgentAddIn
 
                 // 调用LLM
                 Debug.WriteLine($"[ProofreadService] 段落 {index + 1} 调用LLM...");
-                string response;
-                try
-                {
-                    response = await _llmService.SendProofreadMessageAsync(_systemPrompt, paragraph);
-                }
-                catch (LLMServiceException ex)
-                {
-                    // API 调用失败，记录错误但继续处理其他段落
-                    Debug.WriteLine($"[ProofreadService] 段落 {index + 1} LLM调用失败: {ex.GetFriendlyErrorMessage()}");
-                    
-                    return new ParagraphResult
-                    {
-                        Index = index,
-                        OriginalText = paragraph,
-                        ResultText = $"[错误] {ex.GetFriendlyErrorMessage()}",
-                        IsCompleted = true,
-                        IsCached = false,
-                        ProcessTime = DateTime.Now,
-                        ElapsedMs = stopwatch.ElapsedMilliseconds,
-                        Items = new System.Collections.Generic.List<ProofreadIssueItem>()
-                    };
-                }
-                
+                var response = await _llmService.SendProofreadMessageAsync(_systemPrompt, paragraph);
                 Debug.WriteLine($"[ProofreadService] 段落 {index + 1} LLM返回, 结果长度={response?.Length ?? 0}");
                 
                 // 解析结果
@@ -306,7 +296,9 @@ namespace GOWordAgentAddIn
             finally
             {
                 _semaphore.Release();
+                Interlocked.Decrement(ref _activeTaskCount);
             }
+            } // linkedCts using 结束
         }
 
         /// <summary>
@@ -358,22 +350,22 @@ namespace GOWordAgentAddIn
             var sb = new StringBuilder();
             var now = DateTime.Now;
             
-            sb.AppendLine("【校对报告】");
+            sb.AppendLine("# 校对报告");
             sb.AppendLine();
-            sb.AppendLine("基本信息：");
+            sb.AppendLine("## 基本信息");
             
             if (totalChars > 0)
-                sb.AppendLine($"  字数：{totalChars:N0}");
+                sb.AppendLine($"- **字数**：{totalChars:N0}");
             
-            sb.AppendLine($"  分块：{results.Count} 块");
+            sb.AppendLine($"- **分块**：{results.Count} 块");
             
             if (!string.IsNullOrEmpty(providerName))
-                sb.AppendLine($"  校对模型：{providerName}");
+                sb.AppendLine($"- **校对模型**：{providerName}");
             
-            sb.AppendLine($"  生成时间：{now:yyyy-MM-dd HH:mm:ss}");
+            sb.AppendLine($"- **生成时间**：{now:yyyy-MM-dd HH:mm:ss}");
             
             if (elapsed.HasValue)
-                sb.AppendLine($"  耗时：{elapsed.Value.TotalSeconds:F1} 秒");
+                sb.AppendLine($"- **耗时**：{elapsed.Value.TotalSeconds:F1} 秒");
             
             sb.AppendLine();
 
@@ -401,18 +393,20 @@ namespace GOWordAgentAddIn
                     cachedCount++;
             }
 
-            sb.AppendLine($"统计汇总（共发现 {totalIssues} 处问题）：");
+            sb.AppendLine("## 统计汇总");
+            sb.AppendLine();
+            sb.AppendLine($"### 发现问题（共 {totalIssues} 处）");
             
             if (allCategories.Count > 0)
             {
                 foreach (var kv in allCategories.OrderByDescending(x => x.Value))
                 {
-                    sb.AppendLine($"  • {kv.Key}：{kv.Value} 处");
+                    sb.AppendLine($"- {kv.Key}：{kv.Value} 处");
                 }
             }
             else
             {
-                sb.AppendLine("  • 未发现明显错误");
+                sb.AppendLine("- 未发现明显错误");
             }
             
             if (cachedCount > 0)
@@ -464,8 +458,21 @@ namespace GOWordAgentAddIn
             {
                 if (disposing)
                 {
-                    // 释放托管资源
+                    // 1. 触发取消令牌，通知所有正在等待的任务退出
+                    _disposeCts?.Cancel();
+                    
+                    // 2. 等待正在执行的任务完成（最多等待 5 秒）
+                    var sw = Stopwatch.StartNew();
+                    while (sw.ElapsedMilliseconds < 5000 && Interlocked.Read(ref _activeTaskCount) > 0)
+                    {
+                        Thread.Sleep(50);
+                    }
+                    
+                    // 3. 释放信号量（此时所有任务应该已退出）
                     _semaphore?.Dispose();
+                    
+                    // 4. 释放取消令牌源
+                    _disposeCts?.Dispose();
                 }
                 
                 _disposed = true;

@@ -23,6 +23,10 @@ namespace GOWordAgentAddIn
         // 访问计数，用于LRU淘汰
         private static readonly Dictionary<string, long> _accessCount = new Dictionary<string, long>();
         private static long _accessCounter = 0;
+        
+        // 静态 SHA256 实例，避免高并发时频繁创建（需配合锁使用，因为 SHA256 不是线程安全的）
+        private static readonly SHA256 _sha256 = SHA256.Create();
+        private static readonly object _shaLock = new object();
 
         /// <summary>
         /// 缓存命中事件
@@ -126,18 +130,22 @@ namespace GOWordAgentAddIn
 
         /// <summary>
         /// 计算文本哈希（用于缓存键）
+        /// 使用静态 SHA256 实例 + 锁，避免高并发时 SHA256.Create() 的锁竞争
         /// </summary>
         public static string ComputeHash(string text)
         {
             if (string.IsNullOrEmpty(text))
                 return string.Empty;
 
-            using (var sha = SHA256.Create())
+            var bytes = Encoding.UTF8.GetBytes(text);
+            byte[] hash;
+            
+            lock (_shaLock)
             {
-                var bytes = Encoding.UTF8.GetBytes(text);
-                var hash = sha.ComputeHash(bytes);
-                return Convert.ToBase64String(hash);
+                hash = _sha256.ComputeHash(bytes);
             }
+            
+            return Convert.ToBase64String(hash);
         }
 
         /// <summary>

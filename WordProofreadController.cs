@@ -11,14 +11,95 @@ namespace GOWordAgentAddIn
 {
     /// <summary>
     /// Word 校对文档控制器 - 处理校对结果与 Word 文档的交互
+    /// 支持多文档场景：绑定特定文档，防止切换文档导致引用失效
     /// </summary>
-    public class WordProofreadController
+    public class WordProofreadController : IDisposable
     {
         private readonly Dispatcher _dispatcher;
+        private WordDocumentService _documentService;
+        private Word.Document _boundDocument;
+        private readonly object _lock = new object();
+        private bool _disposed;
 
         public WordProofreadController(Dispatcher dispatcher = null)
         {
             _dispatcher = dispatcher ?? Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
+        }
+
+        /// <summary>
+        /// 获取当前绑定的文档服务（多文档安全）
+        /// </summary>
+        private bool TryGetDocumentService(out WordDocumentService service, out string errorMessage)
+        {
+            lock (_lock)
+            {
+                // 检查当前活动文档是否与绑定文档一致
+                var app = Globals.ThisAddIn?.Application;
+                if (app == null)
+                {
+                    service = null;
+                    errorMessage = "无法访问 Word 应用";
+                    return false;
+                }
+
+                var activeDoc = app.ActiveDocument;
+                if (activeDoc == null)
+                {
+                    service = null;
+                    errorMessage = "当前未打开任何文档";
+                    return false;
+                }
+
+                // 如果尚未绑定或绑定的是不同文档，重新创建服务
+                if (_documentService == null || !IsSameDocument(_boundDocument, activeDoc))
+                {
+                    // 释放旧服务
+                    _documentService?.Dispose();
+                    _documentService = null;
+                    _boundDocument = null;
+
+                    // 创建新服务
+                    if (!WordDocumentServiceFactory.TryCreateForDocument(app, activeDoc, out _documentService, out errorMessage))
+                    {
+                        service = null;
+                        return false;
+                    }
+                    _boundDocument = activeDoc;
+                    System.Diagnostics.Debug.WriteLine($"[WordProofreadController] 绑定到新文档: {activeDoc.Name}");
+                }
+
+                // 验证文档是否仍有效
+                if (!_documentService.IsDocumentValid())
+                {
+                    _documentService.Dispose();
+                    _documentService = null;
+                    _boundDocument = null;
+                    errorMessage = "文档已被关闭或释放";
+                    service = null;
+                    return false;
+                }
+
+                service = _documentService;
+                errorMessage = null;
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 检查两个文档引用是否指向同一文档
+        /// </summary>
+        private bool IsSameDocument(Word.Document doc1, Word.Document doc2)
+        {
+            if (doc1 == null || doc2 == null) return false;
+            try
+            {
+                return doc1.FullName == doc2.FullName;
+            }
+            catch
+            {
+                // 如果访问属性失败，假设不是同一文档
+                return false;
+            }
         }
 
         /// <summary>
@@ -42,6 +123,7 @@ namespace GOWordAgentAddIn
         /// <summary>
         /// 应用校对结果到文档（批注/修订）
         /// 优化：先查找所有位置，然后倒序处理避免偏移
+        /// 支持多文档：绑定到特定文档，切换文档时会重新绑定
         /// </summary>
         public List<ProofreadIssueItem> ApplyProofreadToDocument(List<ProofreadIssueItem> items, Action<string, string, bool, bool> addMessageCallback = null)
         {
@@ -49,9 +131,10 @@ namespace GOWordAgentAddIn
             {
                 return _dispatcher.Invoke(() =>
                 {
-                    if (!WordDocumentServiceFactory.TryCreate(out var service, out var errorMessage))
+                    if (!TryGetDocumentService(out var service, out var errorMessage))
                     {
                         System.Diagnostics.Debug.WriteLine($"[WordProofreadController] {errorMessage}");
+                        addMessageCallback?.Invoke("错误", errorMessage, false, true);
                         return new List<ProofreadIssueItem>();
                     }
 
@@ -91,6 +174,7 @@ namespace GOWordAgentAddIn
 
         /// <summary>
         /// 在文档中定位到指定问题
+        /// 支持多文档：绑定到特定文档，切换文档时会重新绑定
         /// </summary>
         public void NavigateToIssue(ProofreadIssueItem item)
         {
@@ -100,7 +184,7 @@ namespace GOWordAgentAddIn
                 {
                     try
                     {
-                        if (!WordDocumentServiceFactory.TryCreate(out var service, out var errorMessage))
+                        if (!TryGetDocumentService(out var service, out var errorMessage))
                         {
                             MessageBox.Show(errorMessage, "定位失败", MessageBoxButton.OK, MessageBoxImage.Warning);
                             return;
@@ -189,5 +273,23 @@ namespace GOWordAgentAddIn
             
             return processedItems;
         }
+
+        #region IDisposable
+
+        public void Dispose()
+        {
+            if (!_disposed)
+            {
+                lock (_lock)
+                {
+                    _documentService?.Dispose();
+                    _documentService = null;
+                    _boundDocument = null;
+                }
+                _disposed = true;
+            }
+        }
+
+        #endregion
     }
 }

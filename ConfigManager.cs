@@ -91,6 +91,12 @@ namespace GOWordAgentAddIn
         /// 校验提示词（兼容旧配置）
         /// </summary>
         public string ProofreadPrompt { get; set; } = "";
+
+        /// <summary>
+        /// 上次显示隐私提示的日期（yyyy-MM-dd 格式）
+        /// 用于判断当天是否已显示过
+        /// </summary>
+        public string PrivacyConsentLastShownDate { get; set; } = "";
     }
 
     /// <summary>

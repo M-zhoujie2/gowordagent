@@ -98,6 +98,10 @@
     <DefineConstants>$(DefineConstants);TRACE</DefineConstants>
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
+  <!-- DPI 感知设置 - 修复 MaterialDesign 在高分辨率屏幕的模糊问题 -->
+  <PropertyGroup>
+    <ApplicationManifest>Properties\app.manifest</ApplicationManifest>
+  </PropertyGroup>
   <!--
     This section specifies references for the project.
   -->
@@ -242,6 +246,13 @@
     </Page>
     <Compile Include="GOWordAgentPaneWpf.xaml.cs">
       <DependentUpon>GOWordAgentPaneWpf.xaml</DependentUpon>
+    </Compile>
+    <Page Include="PrivacyConsentDialog.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+    <Compile Include="PrivacyConsentDialog.xaml.cs">
+      <DependentUpon>PrivacyConsentDialog.xaml</DependentUpon>
     </Compile>
     <Compile Include="gowordagentribbon.cs">
       <SubType>Component</SubType>
