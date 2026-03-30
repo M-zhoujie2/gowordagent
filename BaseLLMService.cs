@@ -61,6 +61,7 @@ namespace GOWordAgentAddIn
                 UserContent = userContent,
                 UserContentLength = userContent?.Length ?? 0
             };
+            requestInfo.SetApiKey(_apiKey); // 记录脱敏的 API Key 提示
 
             var messages = new List<object>
             {

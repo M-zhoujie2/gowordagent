@@ -126,6 +126,12 @@ namespace GOWordAgentAddIn
             BtnSaveProofreadConfig.Click += BtnSaveProofreadConfig_Click;
             CmbAIProvider.SelectionChanged += CmbAIProvider_SelectionChanged;
             
+            // 绑定校验模式切换事件
+            if (CmbProofreadMode != null)
+            {
+                CmbProofreadMode.SelectionChanged += CmbProofreadMode_SelectionChanged;
+            }
+            
             // 初始化校验配置
             InitializeProofreadConfig();
             
@@ -536,6 +542,9 @@ namespace GOWordAgentAddIn
                     LblProofreadStatus.Text = $"状态: 已切换为{mode}";
                     LblProofreadStatus.Foreground = Brushes.Green;
                 }
+                
+                // 在聊天框提示当前校验模式
+                AddMessageBubble("系统", $"已切换为{mode}模式", false);
             }
         }
 

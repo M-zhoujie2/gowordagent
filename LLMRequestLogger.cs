@@ -7,6 +7,7 @@ namespace GOWordAgentAddIn
 {
     /// <summary>
     /// 请求日志信息
+    /// 注意：出于安全考虑，此类不记录 API Key 和 HTTP Headers
     /// </summary>
     public class RequestLogInfo
     {
@@ -14,12 +15,34 @@ namespace GOWordAgentAddIn
         public DateTime RequestTime { get; set; }
         public DateTime ResponseTime { get; set; }
         public long ElapsedMs { get; set; }
+        
+        /// <summary>
+        /// API Key 脱敏提示（前4位+***），用于调试识别
+        /// </summary>
+        public string ApiKeyHint { get; set; }
+        
         public string SystemPrompt { get; set; }
         public string UserContent { get; set; }
         public int UserContentLength { get; set; }
         public string ResponseContent { get; set; }
         public int ResponseLength { get; set; }
         public bool IsSuccess { get; set; }
+
+        /// <summary>
+        /// 设置 API Key 并生成脱敏提示
+        /// </summary>
+        public void SetApiKey(string apiKey)
+        {
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                ApiKeyHint = "(空)";
+            }
+            else
+            {
+                int showLength = Math.Min(4, apiKey.Length);
+                ApiKeyHint = apiKey.Substring(0, showLength) + new string('*', apiKey.Length - showLength);
+            }
+        }
     }
 
     /// <summary>
@@ -41,6 +64,7 @@ namespace GOWordAgentAddIn
 
         /// <summary>
         /// 写入日志
+        /// 注意：出于安全考虑，日志中不记录完整 API Key
         /// </summary>
         public void WriteLog(RequestLogInfo logInfo)
         {
@@ -50,6 +74,7 @@ namespace GOWordAgentAddIn
                 sb.AppendLine("========================================");
                 sb.AppendLine($"时间: {logInfo.RequestTime:yyyy-MM-dd HH:mm:ss.fff}");
                 sb.AppendLine($"提供商: {logInfo.Provider}");
+                sb.AppendLine($"API Key: {logInfo.ApiKeyHint ?? "(空)"}");
                 sb.AppendLine($"状态: {(logInfo.IsSuccess ? "成功" : "失败")}");
                 sb.AppendLine($"耗时: {logInfo.ElapsedMs}ms");
                 sb.AppendLine($"请求文本长度: {logInfo.UserContentLength} 字符");

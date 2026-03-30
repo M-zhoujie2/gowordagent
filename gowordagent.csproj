@@ -205,6 +205,7 @@
   <ItemGroup>
     <Compile Include="ILLMService.cs" />
     <Compile Include="LLMServiceException.cs" />
+    <Compile Include="ConfigSecurityException.cs" />
     <Compile Include="LLMServiceFactory.cs" />
     <Compile Include="HttpClientFactory.cs" />
     <Compile Include="LLMRequestLogger.cs" />
