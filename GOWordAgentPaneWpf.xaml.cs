@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
@@ -10,6 +11,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using GOWordAgentAddIn.Models;
+using GOWordAgentAddIn.ViewModels;
 using Word = Microsoft.Office.Interop.Word;
 
 namespace GOWordAgentAddIn
@@ -19,6 +22,12 @@ namespace GOWordAgentAddIn
         private ILLMService _llmService;
         private List<ChatMessage> _messageHistory = new List<ChatMessage>();
         private AIProvider _currentProvider = AIProvider.DeepSeek;
+        private readonly WordProofreadController _wordController = new WordProofreadController();
+        
+        /// <summary>
+        /// 聊天消息集合（用于数据绑定，支持多种 ViewModel 类型）
+        /// </summary>
+        public ObservableCollection<object> ChatMessages { get; } = new ObservableCollection<object>();
 
         private static readonly SolidColorBrush _primaryColor = CreateFrozenBrush(0, 120, 212);
         private static readonly SolidColorBrush _primaryLightColor = CreateFrozenBrush(232, 242, 252);
@@ -41,6 +50,10 @@ namespace GOWordAgentAddIn
         public GOWordAgentPaneWpf()
         {
             InitializeComponent();
+            
+            // 设置数据绑定
+            ChatMessagesControl.ItemsSource = ChatMessages;
+            
             InitializeEvents();
             InitializeAIProviderComboBox();
             LoadSavedConfig();
@@ -397,17 +410,45 @@ namespace GOWordAgentAddIn
         {
             try
             {
-                if (ChatMessagesPanel == null)
-                {
-                    System.Diagnostics.Debug.WriteLine("[AddMessageBubble] ChatMessagesPanel 为空");
-                    return;
-                }
-
-                var bubbleType = isError ? BubbleType.Error : (isUser ? BubbleType.User : BubbleType.AI);
-                var bubble = MessageBubbleFactory.CreateBubble(sender, message, bubbleType, copyButton: true);
-                var container = MessageBubbleFactory.WrapInContainer(bubble, alignRight: isUser);
+                ChatMessageViewModel vm;
+                if (isError)
+                    vm = ChatMessageViewModel.CreateError(message);
+                else if (isUser)
+                    vm = ChatMessageViewModel.CreateUser(message);
+                else if (sender == "系统")
+                    vm = ChatMessageViewModel.CreateSystem(message);
+                else
+                    vm = ChatMessageViewModel.CreateAI(message, showCopyButton: true);
                 
-                ChatMessagesPanel.Children.Add(container);
+                // 设置复制命令
+                if (vm.ShowCopyButton)
+                {
+                    vm.CopyCommand = new RelayCommand(() =>
+                    {
+                        try
+                        {
+                            Clipboard.SetText(vm.Content);
+                            vm.CopyButtonText = "✓ 已复制";
+                            
+                            var timer = new System.Windows.Threading.DispatcherTimer 
+                            { 
+                                Interval = TimeSpan.FromSeconds(2) 
+                            };
+                            EventHandler tickHandler = null;
+                            tickHandler = (ts, te) =>
+                            {
+                                vm.CopyButtonText = "📋 复制";
+                                timer.Stop();
+                                timer.Tick -= tickHandler;
+                            };
+                            timer.Tick += tickHandler;
+                            timer.Start();
+                        }
+                        catch { }
+                    });
+                }
+                
+                ChatMessages.Add(vm);
                 ChatScrollViewer.ScrollToEnd();
             }
             catch (Exception ex)
@@ -424,7 +465,7 @@ namespace GOWordAgentAddIn
         private void BtnClear_Click(object sender, RoutedEventArgs e)
         {
             // 清空聊天框
-            ChatMessagesPanel.Children.Clear();
+            ChatMessages.Clear();
             _messageHistory.Clear();
             
             // 清空内存缓存
@@ -634,7 +675,7 @@ namespace GOWordAgentAddIn
                 return;
             }
 
-            string docText = GetDocumentText();
+            string docText = _wordController.GetDocumentText();
             if (string.IsNullOrWhiteSpace(docText)) return;
 
             // 取消并释放之前的校对任务
@@ -665,7 +706,7 @@ namespace GOWordAgentAddIn
                 lock (_proofreadResultsLock) { _proofreadResults.AddRange(results); }
                 
                 // 生成详细报告
-                var report = GenerateProofreadReport(results, docText.Length, stopwatch.Elapsed);
+                var report = ProofreadService.GenerateReport(results, docText.Length, stopwatch.Elapsed, _llmService?.ProviderName);
                 
                 // 解析所有问题项
                 var allIssues = new List<ProofreadIssueItem>();
@@ -678,7 +719,7 @@ namespace GOWordAgentAddIn
                 }
                 
                 // 应用批注到文档，并获取处理后的项目（带位置信息）
-                var processedIssues = ApplyProofreadToDocument(allIssues);
+                var processedIssues = _wordController.ApplyProofreadToDocument(allIssues, AddMessageBubble);
                 
                 // 在聊天框显示合并的结果（问题列表+分块详情）
                 AddProofreadResultBubble("校对结果", report, processedIssues, results);
@@ -771,73 +812,6 @@ namespace GOWordAgentAddIn
         }
 
         /// <summary>
-        /// 生成详细校对报告（用于聊天框显示）
-        /// </summary>
-        private string GenerateProofreadReport(List<ParagraphResult> results, int totalChars, TimeSpan elapsed)
-        {
-            var sb = new StringBuilder();
-            var now = DateTime.Now;
-            
-            // 基本信息
-            sb.AppendLine("# 校对报告");
-            sb.AppendLine();
-            sb.AppendLine("## 基本信息");
-            sb.AppendLine($"- **字数**：{totalChars:N0}");
-            sb.AppendLine($"- **分块**：{results.Count} 块");
-            sb.AppendLine($"- **校对模型**：{_llmService?.ProviderName ?? "未知"}");
-            sb.AppendLine($"- **生成时间**：{now:yyyy-MM-dd HH:mm:ss}");
-            sb.AppendLine($"- **耗时**：{elapsed.TotalSeconds:F1} 秒");
-            sb.AppendLine();
-            
-            // 统计汇总
-            int totalIssues = 0;
-            var allCategories = new Dictionary<string, int>();
-            int cachedCount = 0;
-            
-            foreach (var result in results)
-            {
-                int issues = ProofreadIssueParser.CountIssues(result.ResultText);
-                totalIssues += issues;
-                
-                var cats = ProofreadIssueParser.CategorizeIssues(result.ResultText);
-                foreach (var kv in cats)
-                {
-                    if (allCategories.ContainsKey(kv.Key))
-                        allCategories[kv.Key] += kv.Value;
-                    else
-                        allCategories[kv.Key] = kv.Value;
-                }
-                
-                if (result.IsCached)
-                    cachedCount++;
-            }
-            
-            sb.AppendLine("## 统计汇总");
-            sb.AppendLine();
-            sb.AppendLine($"### 发现问题（共 {totalIssues} 处）");
-            
-            if (allCategories.Count > 0)
-            {
-                foreach (var kv in allCategories.OrderByDescending(x => x.Value))
-                {
-                    sb.AppendLine($"- {kv.Key}：{kv.Value} 处");
-                }
-            }
-            else
-            {
-                sb.AppendLine("- 未发现明显错误");
-            }
-            
-            if (cachedCount > 0)
-            {
-                sb.AppendLine();
-                sb.AppendLine($"（其中 {cachedCount} 段来自缓存）");
-            }
-            
-            return sb.ToString();
-        }
-
-        /// <summary>
         /// 生成简要统计（用于进度气泡）
         /// </summary>
         private string GenerateBriefStats(List<ParagraphResult> results)
@@ -884,116 +858,7 @@ namespace GOWordAgentAddIn
             return sb.ToString();
         }
 
-        private string GetDocumentText()
-        {
-            try
-            {
-                var app = Globals.ThisAddIn?.Application;
-                if (app == null) throw new InvalidOperationException("无法访问 Word 应用。");
-                return WordDocumentService.GetDocumentText(app);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"获取文档失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-                return null;
-            }
-        }
 
-        /// <summary>
-        /// 应用批注到文档，使用 Word 原生修订显示
-        /// 优化：先为所有问题项查找位置，然后按位置倒序处理（从后往前），避免偏移问题
-        /// </summary>
-        private List<ProofreadIssueItem> ApplyProofreadToDocument(List<ProofreadIssueItem> items)
-        {
-            try
-            {
-                return Dispatcher.Invoke(() =>
-                {
-                    if (!WordDocumentServiceFactory.TryCreate(out var service, out var errorMessage))
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[ApplyProofreadToDocument] {errorMessage}");
-                        return new List<ProofreadIssueItem>();
-                    }
-
-                    try
-                    {
-                        // 第一步：为所有问题项查找位置（此时文档还未修改）
-                        var itemsWithPosition = new List<(ProofreadIssueItem item, int start, int end)>();
-                        foreach (var item in items)
-                        {
-                            if (item == null) continue;
-                            
-                            // 使用原文查找位置
-                            var (found, start, end) = service.FindTextPosition(item.Original);
-                            if (found)
-                            {
-                                itemsWithPosition.Add((item, start, end));
-                                System.Diagnostics.Debug.WriteLine($"[ApplyProofreadToDocument] 找到 '{item.Original.Substring(0, Math.Min(10, item.Original.Length))}...' 在位置 {start}-{end}");
-                            }
-                            else
-                            {
-                                System.Diagnostics.Debug.WriteLine($"[ApplyProofreadToDocument] 未找到: '{item.Original.Substring(0, Math.Min(10, item.Original.Length))}...'");
-                            }
-                        }
-                        
-                        // 第二步：按位置倒序排列（从文档末尾到开头）
-                        // 这样替换时不会影响前面（文档头部）的位置
-                        itemsWithPosition = itemsWithPosition.OrderByDescending(x => x.start).ToList();
-                        
-                        // 第三步：逐个使用确切位置替换
-                        var processedItems = new List<ProofreadIssueItem>();
-                        foreach (var (item, start, end) in itemsWithPosition)
-                        {
-                            try
-                            {
-                                if (service.ApplyRevisionAtRange(start, end, item.Original, item.Modified, 
-                                    BuildCommentText(item), out int newStart, out int newEnd))
-                                {
-                                    item.DocumentStart = newStart;
-                                    item.DocumentEnd = newEnd;
-                                    processedItems.Add(item);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"[ApplyProofreadToDocument] 处理项目时出错: {ex.Message}");
-                            }
-                        }
-                        
-                        // 按原始索引顺序返回
-                        processedItems = processedItems.OrderBy(i => i.Index).ToList();
-                        
-                        if (processedItems.Count > 0)
-                            AddMessageBubble("系统", $"已将 {processedItems.Count} 条诊断以批注/修订形式写入文档。", false);
-                        return processedItems;
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[ApplyProofreadToDocument] 错误: {ex.Message}");
-                        AddMessageBubble("错误", $"写回文档时出错: {ex.Message}", false, true);
-                        return new List<ProofreadIssueItem>();
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[ApplyProofreadToDocument] 调度错误: {ex.Message}");
-                return new List<ProofreadIssueItem>();
-            }
-        }
-        
-        /// <summary>
-        /// 构建批注文本
-        /// </summary>
-        private string BuildCommentText(ProofreadIssueItem item)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine($"【第{item.Index}处】类型：{item.Type}{(string.IsNullOrEmpty(item.Severity) ? "" : $"｜严重度：{item.Severity}")}");
-            sb.AppendLine($"原文：{item.Original}");
-            sb.AppendLine($"修改：{item.Modified}");
-            sb.AppendLine($"理由：{item.Reason}");
-            return sb.ToString();
-        }
 
         /// <summary>
         /// 添加带可点击问题列表和分块详情的校对结果气泡
@@ -1120,7 +985,13 @@ namespace GOWordAgentAddIn
             };
             container.Children.Add(bubbleBorder);
 
-            ChatMessagesPanel.Children.Add(container);
+            // 使用 ComplexMessageViewModel 承载复杂 UI
+            var complexVm = new ComplexMessageViewModel 
+            { 
+                Content = container,
+                AlignRight = false
+            };
+            ChatMessages.Add(complexVm);
             ChatScrollViewer.ScrollToEnd();
         }
 
@@ -1259,71 +1130,10 @@ namespace GOWordAgentAddIn
             button.Content = contentStack;
             
             // 点击事件 - 定位到文档
-            button.Click += (s, e) => NavigateToIssueInDocument(item);
+            button.Click += (s, e) => _wordController.NavigateToIssue(item);
             
             return button;
         }
 
-        /// <summary>
-        /// 在文档中定位到指定问题
-        /// </summary>
-        private void NavigateToIssueInDocument(ProofreadIssueItem item)
-        {
-            try
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    try
-                    {
-                        if (!WordDocumentServiceFactory.TryCreate(out var service, out var errorMessage))
-                        {
-                            MessageBox.Show(errorMessage, "定位失败", MessageBoxButton.OK, MessageBoxImage.Warning);
-                            return;
-                        }
-
-                        service.NavigateToIssue(item);
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[NavigateToIssue] 错误: {ex.Message}");
-                        MessageBox.Show($"定位时发生错误: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[NavigateToIssue] 调度错误: {ex.Message}");
-            }
-        }
-    }
-
-    public class ProviderItem
-    {
-        public AIProvider Provider { get; set; }
-        public string Name { get; set; }
-        public override string ToString() => Name;
-    }
-
-    /// <summary>
-    /// 校对问题项（带位置信息）
-    /// 注意：DocumentStart/DocumentEnd 仅在应用修订时有效，
-    /// 后续如果文档被修改，这些位置可能偏移。导航时应优先使用 Original 文本搜索。
-    /// </summary>
-    public class ProofreadIssueItem
-    {
-        public int Index { get; set; }
-        public string Type { get; set; }
-        public string Original { get; set; }
-        public string Modified { get; set; }
-        public string Reason { get; set; }
-        public string Severity { get; set; }
-        /// <summary>
-        /// 在文档中的起始位置（仅作为缓存，多修订后可能偏移）
-        /// </summary>
-        public int DocumentStart { get; set; }
-        /// <summary>
-        /// 在文档中的结束位置（仅作为缓存，多修订后可能偏移）
-        /// </summary>
-        public int DocumentEnd { get; set; }
     }
 }

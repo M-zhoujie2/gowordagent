@@ -8,122 +8,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
+using GOWordAgentAddIn.Models;
 
 namespace GOWordAgentAddIn
 {
-    #region 数据模型
-
-    /// <summary>
-    /// 段落校验结果
-    /// </summary>
-    public class ParagraphResult
-    {
-        /// <summary>
-        /// 段落索引
-        /// </summary>
-        public int Index { get; set; }
-        
-        /// <summary>
-        /// 原始文本
-        /// </summary>
-        public string OriginalText { get; set; }
-        
-        /// <summary>
-        /// 完整结果文本
-        /// </summary>
-        public string ResultText { get; set; }
-        
-        /// <summary>
-        /// 是否已完成
-        /// </summary>
-        public bool IsCompleted { get; set; }
-        
-        /// <summary>
-        /// 是否来自缓存
-        /// </summary>
-        public bool IsCached { get; set; }
-        
-        /// <summary>
-        /// 处理时间
-        /// </summary>
-        public DateTime ProcessTime { get; set; }
-        
-        /// <summary>
-        /// 耗时（毫秒）
-        /// </summary>
-        public long ElapsedMs { get; set; }
-        
-        /// <summary>
-        /// 解析出的校对项
-        /// </summary>
-        public List<ProofreadItem> Items { get; set; } = new List<ProofreadItem>();
-    }
-
-    /// <summary>
-    /// 校对项
-    /// </summary>
-    public class ProofreadItem
-    {
-        public string Type { get; set; }
-        public string Severity { get; set; }
-        public string Original { get; set; }
-        public string Modified { get; set; }
-        public string Reason { get; set; }
-    }
-
-    #endregion
-
-    #region 事件参数
-
-    /// <summary>
-    /// 校验进度回调参数
-    /// </summary>
-    public class ProofreadProgressArgs : EventArgs
-    {
-        /// <summary>
-        /// 总段落数
-        /// </summary>
-        public int TotalParagraphs { get; set; }
-        
-        /// <summary>
-        /// 已完成段落数
-        /// </summary>
-        public int CompletedParagraphs { get; set; }
-        
-        /// <summary>
-        /// 当前处理中的段落索引
-        /// </summary>
-        public int CurrentIndex { get; set; }
-        
-        /// <summary>
-        /// 当前状态描述
-        /// </summary>
-        public string CurrentStatus { get; set; }
-        
-        /// <summary>
-        /// 当前段落结果
-        /// </summary>
-        public ParagraphResult Result { get; set; }
-        
-        /// <summary>
-        /// 是否全部完成
-        /// </summary>
-        public bool IsCompleted { get; set; }
-        
-        /// <summary>
-        /// 预计剩余时间（秒）
-        /// </summary>
-        public int EstimatedRemainingSeconds { get; set; }
-        
-        /// <summary>
-        /// 缓存命中数
-        /// </summary>
-        public int CacheHitCount { get; set; }
-    }
-
-    #endregion
-
-    #region 校对服务
 
     /// <summary>
     /// 增强的校验服务 - 支持并发、缓存
@@ -141,11 +29,6 @@ namespace GOWordAgentAddIn
 
         // 性能统计 - 使用 Interlocked 操作
         private int _cacheHitCount = 0;
-
-        // 预编译的正则表达式（提高性能）
-        private static readonly Regex ProofreadItemRegex = new Regex(
-            @"【第\d+处】类型：(?<type>[^\r\n|]+)(?:[｜|]严重度：(?<severity>[^\r\n]+))?\r?\n原文：(?<original>.*?)\r?\n修改：(?<modified>.*?)\r?\n理由：(?<reason>.*?)(?=\r?\n【第|$)", 
-            RegexOptions.Singleline | RegexOptions.Compiled);
 
         /// <summary>
         /// 进度更新事件（线程安全）
@@ -308,7 +191,7 @@ namespace GOWordAgentAddIn
                             IsCompleted = true,
                             IsCached = true,
                             ProcessTime = DateTime.Now,
-                            Items = prev.Items?.ToList() ?? new List<ProofreadItem>()
+                            Items = prev.Items?.ToList() ?? new List<ProofreadIssueItem>()
                         };
                         continue;
                     }
@@ -377,7 +260,7 @@ namespace GOWordAgentAddIn
                 Debug.WriteLine($"[ProofreadService] 段落 {index + 1} LLM返回, 结果长度={response?.Length ?? 0}");
                 
                 // 解析结果
-                var items = ParseProofreadItems(response);
+                var items = ProofreadIssueParser.ParseProofreadItems(response);
                 
                 var result = new ParagraphResult
                 {
@@ -417,32 +300,6 @@ namespace GOWordAgentAddIn
         }
 
         /// <summary>
-        /// 解析校对结果
-        /// </summary>
-        private List<ProofreadItem> ParseProofreadItems(string aiResponse)
-        {
-            var items = new List<ProofreadItem>();
-            
-            if (string.IsNullOrWhiteSpace(aiResponse))
-                return items;
-            
-            // 使用预编译的正则表达式（静态字段，性能更好）
-            foreach (Match match in ProofreadItemRegex.Matches(aiResponse))
-            {
-                items.Add(new ProofreadItem
-                {
-                    Type = match.Groups["type"].Value.Trim(),
-                    Severity = match.Groups["severity"].Value.Trim().ToLower(),
-                    Original = match.Groups["original"].Value.Trim(),
-                    Modified = match.Groups["modified"].Value.Trim(),
-                    Reason = match.Groups["reason"].Value.Trim()
-                });
-            }
-
-            return items;
-        }
-
-        /// <summary>
         /// 报告进度
         /// </summary>
         private void ReportProgress(int total, int completed, int current, string status, 
@@ -468,64 +325,34 @@ namespace GOWordAgentAddIn
         #region 静态工具方法
 
         /// <summary>
-        /// 统计问题数量
+        /// 生成统计报告（详细版）
         /// </summary>
-        public static int CountIssues(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text)) return 0;
-            var matches = Regex.Matches(text, @"【第\d+处】");
-            return matches.Count;
-        }
-
-        /// <summary>
-        /// 按类型统计问题
-        /// </summary>
-        public static Dictionary<string, int> CategorizeIssues(string text)
-        {
-            var categories = new Dictionary<string, int>();
-            if (string.IsNullOrWhiteSpace(text)) return categories;
-
-            var pattern = @"【第\d+处】类型：([^\r\n|]+)";
-            foreach (Match match in Regex.Matches(text, pattern))
-            {
-                string cat = match.Groups[1].Value.Trim();
-                
-                // 归一化分类
-                if (cat.Contains("错别字") || cat.Contains("拼写"))
-                    cat = "错别字";
-                else if (cat.Contains("语病") || cat.Contains("语法") || cat.Contains("搭配") || cat.Contains("杂糅"))
-                    cat = "语病";
-                else if (cat.Contains("标点"))
-                    cat = "标点错误";
-                else if (cat.Contains("序号"))
-                    cat = "序号问题";
-                else if (cat.Contains("用词"))
-                    cat = "用词不当";
-                else if (cat.Contains("术语") || cat.Contains("不一致"))
-                    cat = "术语不一致";
-                else if (cat.Contains("格式"))
-                    cat = "格式问题";
-                else if (cat.Contains("逻辑") || cat.Contains("矛盾"))
-                    cat = "逻辑/矛盾";
-                else
-                    cat = "其他";
-
-                if (categories.ContainsKey(cat))
-                    categories[cat]++;
-                else
-                    categories[cat] = 1;
-            }
-
-            return categories;
-        }
-
-        /// <summary>
-        /// 生成统计报告
-        /// </summary>
-        public static string GenerateReport(List<ParagraphResult> results)
+        /// <param name="results">段落结果列表</param>
+        /// <param name="totalChars">总字数（可选）</param>
+        /// <param name="elapsed">耗时（可选）</param>
+        /// <param name="providerName">AI 提供商名称（可选）</param>
+        public static string GenerateReport(List<ParagraphResult> results, int totalChars = 0, TimeSpan? elapsed = null, string providerName = null)
         {
             var sb = new StringBuilder();
-            sb.AppendLine("## 校对统计报告");
+            var now = DateTime.Now;
+            
+            sb.AppendLine("# 校对报告");
+            sb.AppendLine();
+            sb.AppendLine("## 基本信息");
+            
+            if (totalChars > 0)
+                sb.AppendLine($"- **字数**：{totalChars:N0}");
+            
+            sb.AppendLine($"- **分块**：{results.Count} 块");
+            
+            if (!string.IsNullOrEmpty(providerName))
+                sb.AppendLine($"- **校对模型**：{providerName}");
+            
+            sb.AppendLine($"- **生成时间**：{now:yyyy-MM-dd HH:mm:ss}");
+            
+            if (elapsed.HasValue)
+                sb.AppendLine($"- **耗时**：{elapsed.Value.TotalSeconds:F1} 秒");
+            
             sb.AppendLine();
 
             int totalIssues = 0;
@@ -536,10 +363,10 @@ namespace GOWordAgentAddIn
             {
                 if (result == null) continue;
                 
-                int issues = CountIssues(result.ResultText);
+                int issues = ProofreadIssueParser.CountIssues(result.ResultText);
                 totalIssues += issues;
 
-                var cats = CategorizeIssues(result.ResultText);
+                var cats = ProofreadIssueParser.CategorizeIssues(result.ResultText);
                 foreach (var kv in cats)
                 {
                     if (allCategories.ContainsKey(kv.Key))
@@ -552,14 +379,12 @@ namespace GOWordAgentAddIn
                     cachedCount++;
             }
 
-            sb.AppendLine($"**共处理 {results.Count} 段，发现 {totalIssues} 处问题**");
-            if (cachedCount > 0)
-                sb.AppendLine($"（其中 {cachedCount} 段来自缓存）");
+            sb.AppendLine("## 统计汇总");
             sb.AppendLine();
-
+            sb.AppendLine($"### 发现问题（共 {totalIssues} 处）");
+            
             if (allCategories.Count > 0)
             {
-                sb.AppendLine("### 问题分类统计");
                 foreach (var kv in allCategories.OrderByDescending(x => x.Value))
                 {
                     sb.AppendLine($"- {kv.Key}：{kv.Value} 处");
@@ -567,7 +392,13 @@ namespace GOWordAgentAddIn
             }
             else
             {
-                sb.AppendLine("✅ 未发现明显错误");
+                sb.AppendLine("- 未发现明显错误");
+            }
+            
+            if (cachedCount > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"（其中 {cachedCount} 段来自缓存）");
             }
 
             return sb.ToString();
@@ -631,6 +462,4 @@ namespace GOWordAgentAddIn
 
         #endregion
     }
-
-    #endregion
 }

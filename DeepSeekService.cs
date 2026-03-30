@@ -1,10 +1,8 @@
-using System.Threading;
-using System.Threading.Tasks;
-
 namespace GOWordAgentAddIn
 {
     /// <summary>
     /// DeepSeek API 服务
+    /// 使用 BaseLLMService 的默认实现
     /// </summary>
     public class DeepSeekService : BaseLLMService
     {
@@ -16,11 +14,6 @@ namespace GOWordAgentAddIn
                   "deepseek-chat")
         {
         }
-
-        public override async Task<string> SendProofreadMessageAsync(string systemContent, string userContent, CancellationToken cancellationToken = default)
-        {
-            // DeepSeek 特殊处理：使用思考模式
-            return await base.SendProofreadMessageAsync(systemContent, userContent, cancellationToken);
-        }
+        // 使用 BaseLLMService 的默认实现
     }
 }

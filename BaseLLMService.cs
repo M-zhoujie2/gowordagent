@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -21,7 +19,7 @@ namespace GOWordAgentAddIn
         protected readonly string _apiKey;
         protected readonly string _model;
         protected readonly HttpClient _httpClient;
-        private readonly string _logFilePath;
+        protected readonly LLMRequestLogger _logger;
 
         public abstract string ProviderName { get; }
 
@@ -53,13 +51,7 @@ namespace GOWordAgentAddIn
                 _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
             }
 
-            // 初始化日志文件路径
-            _logFilePath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "GOWordAgent",
-                "llm_requests.log");
-            
-            EnsureLogDirectoryExists();
+            _logger = new LLMRequestLogger();
         }
 
         public virtual async Task<string> SendMessageAsync(string userMessage, CancellationToken cancellationToken = default)
@@ -169,7 +161,7 @@ namespace GOWordAgentAddIn
                             logInfo.ResponseContent = result;
                             logInfo.ResponseLength = result?.Length ?? 0;
                             logInfo.IsSuccess = true;
-                            WriteLog(logInfo);
+                            _logger.WriteLog(logInfo);
                         }
                         
                         return result;
@@ -182,7 +174,7 @@ namespace GOWordAgentAddIn
                         logInfo.ElapsedMs = stopwatch.ElapsedMilliseconds;
                         logInfo.ResponseContent = $"HTTP {(int)response.StatusCode}: {responseBody}";
                         logInfo.IsSuccess = false;
-                        WriteLog(logInfo);
+                        _logger.WriteLog(logInfo);
                     }
 
                     return $"API 调用失败: {response.StatusCode}\n{responseBody}";
@@ -199,7 +191,7 @@ namespace GOWordAgentAddIn
                     logInfo.ElapsedMs = stopwatch.ElapsedMilliseconds;
                     logInfo.ResponseContent = errorMsg;
                     logInfo.IsSuccess = false;
-                    WriteLog(logInfo);
+                    _logger.WriteLog(logInfo);
                 }
                 
                 // 重新抛出，让上层处理取消
@@ -216,7 +208,7 @@ namespace GOWordAgentAddIn
                     logInfo.ElapsedMs = stopwatch.ElapsedMilliseconds;
                     logInfo.ResponseContent = errorMsg;
                     logInfo.IsSuccess = false;
-                    WriteLog(logInfo);
+                    _logger.WriteLog(logInfo);
                 }
                 
                 return errorMsg;
@@ -232,7 +224,7 @@ namespace GOWordAgentAddIn
                     logInfo.ElapsedMs = stopwatch.ElapsedMilliseconds;
                     logInfo.ResponseContent = errorMsg;
                     logInfo.IsSuccess = false;
-                    WriteLog(logInfo);
+                    _logger.WriteLog(logInfo);
                 }
                 
                 return errorMsg;
@@ -241,83 +233,15 @@ namespace GOWordAgentAddIn
 
         #region 日志记录
 
-        private void EnsureLogDirectoryExists()
-        {
-            try
-            {
-                var directory = Path.GetDirectoryName(_logFilePath);
-                if (!Directory.Exists(directory))
-                {
-                    Directory.CreateDirectory(directory);
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[BaseLLMService] 创建日志目录失败: {ex.Message}");
-            }
-        }
-
-        private void WriteLog(RequestLogInfo logInfo)
-        {
-            try
-            {
-                var sb = new StringBuilder();
-                sb.AppendLine("========================================");
-                sb.AppendLine($"时间: {logInfo.RequestTime:yyyy-MM-dd HH:mm:ss.fff}");
-                sb.AppendLine($"提供商: {logInfo.Provider}");
-                sb.AppendLine($"状态: {(logInfo.IsSuccess ? "成功" : "失败")}");
-                sb.AppendLine($"耗时: {logInfo.ElapsedMs}ms");
-                sb.AppendLine($"请求文本长度: {logInfo.UserContentLength} 字符");
-                sb.AppendLine($"响应文本长度: {logInfo.ResponseLength} 字符");
-                sb.AppendLine("----------------------------------------");
-                sb.AppendLine("【System Prompt】");
-                sb.AppendLine(logInfo.SystemPrompt ?? "(空)");
-                sb.AppendLine("----------------------------------------");
-                sb.AppendLine("【User Content】");
-                sb.AppendLine(logInfo.UserContent ?? "(空)");
-                sb.AppendLine("----------------------------------------");
-                sb.AppendLine("【Response】");
-                sb.AppendLine(logInfo.ResponseContent ?? "(空)");
-                sb.AppendLine("========================================");
-                sb.AppendLine();
-
-                File.AppendAllText(_logFilePath, sb.ToString(), Encoding.UTF8);
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[Log Error] 写入日志失败: {ex.Message}");
-            }
-        }
-
         /// <summary>
         /// 获取日志文件路径
         /// </summary>
-        public string GetLogFilePath()
-        {
-            return _logFilePath;
-        }
+        public string GetLogFilePath() => _logger.GetLogFilePath();
 
         /// <summary>
         /// 获取最近的日志内容
         /// </summary>
-        public string GetRecentLogs(int maxLines = 100)
-        {
-            try
-            {
-                if (!File.Exists(_logFilePath))
-                    return "暂无日志";
-
-                var lines = File.ReadAllLines(_logFilePath);
-                if (lines.Length <= maxLines)
-                    return string.Join("\n", lines);
-
-                return string.Join("\n", lines.Skip(lines.Length - maxLines));
-            }
-            catch (Exception ex)
-            {
-                return $"读取日志失败: {ex.Message}";
-            }
-        }
+        public string GetRecentLogs(int maxLines = 100) => _logger.GetRecentLogs(maxLines);
 
         #endregion
 
@@ -361,20 +285,4 @@ namespace GOWordAgentAddIn
         #endregion
     }
 
-    /// <summary>
-    /// 请求日志信息
-    /// </summary>
-    public class RequestLogInfo
-    {
-        public string Provider { get; set; }
-        public DateTime RequestTime { get; set; }
-        public DateTime ResponseTime { get; set; }
-        public long ElapsedMs { get; set; }
-        public string SystemPrompt { get; set; }
-        public string UserContent { get; set; }
-        public int UserContentLength { get; set; }
-        public string ResponseContent { get; set; }
-        public int ResponseLength { get; set; }
-        public bool IsSuccess { get; set; }
-    }
 }

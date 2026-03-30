@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using GOWordAgentAddIn.Models;
 
 namespace GOWordAgentAddIn
 {
@@ -64,7 +65,7 @@ namespace GOWordAgentAddIn
                     IsCached = true,
                     ProcessTime = DateTime.Now,
                     ElapsedMs = 0,
-                    Items = cached.Items?.ToList() ?? new List<ProofreadItem>()
+                    Items = cached.Items?.ToList() ?? new List<ProofreadIssueItem>()
                 };
 
                 OnCacheHit?.Invoke(null, new CacheHitEventArgs { Index = index, CacheKey = cacheKey });

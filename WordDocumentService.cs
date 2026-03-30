@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using GOWordAgentAddIn.Models;
 using Word = Microsoft.Office.Interop.Word;
 
 namespace GOWordAgentAddIn
@@ -86,7 +87,7 @@ namespace GOWordAgentAddIn
                 if (selection != null) Marshal.ReleaseComObject(selection);
                 if (activeWindow != null) Marshal.ReleaseComObject(activeWindow);
                 if (contentRange != null) Marshal.ReleaseComObject(contentRange);
-                if (doc != null) Marshal.ReleaseComObject(doc);
+                // 注意：doc 是通过 app.ActiveDocument 获取的引用，不是本方法创建的，不应该释放
             }
         }
 
@@ -541,7 +542,7 @@ namespace GOWordAgentAddIn
                 }
                 catch (COMException)
                 {
-                    Marshal.ReleaseComObject(doc);
+                    // 注意：doc 是通过 app.ActiveDocument 获取的引用，不是本方法创建的，不应该释放
                     errorMessage = "文档已被释放，请重新打开";
                     return false;
                 }
@@ -551,7 +552,7 @@ namespace GOWordAgentAddIn
             }
             catch (Exception ex)
             {
-                if (doc != null) Marshal.ReleaseComObject(doc);
+                // 注意：doc 是通过 app.ActiveDocument 获取的引用，不是本方法创建的，不应该释放
                 errorMessage = ex.Message;
                 return false;
             }

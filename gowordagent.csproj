@@ -205,6 +205,7 @@
   <ItemGroup>
     <Compile Include="ILLMService.cs" />
     <Compile Include="LLMServiceFactory.cs" />
+    <Compile Include="LLMRequestLogger.cs" />
     <Compile Include="ConfigManager.cs" />
     <Compile Include="BaseLLMService.cs" />
     <Compile Include="DeepSeekService.cs" />
@@ -212,13 +213,19 @@
     <Compile Include="OllamaService.cs" />
     <Compile Include="ProofreadService.cs" />
     <Compile Include="WordDocumentService.cs" />
-    <Compile Include="MessageBubbleFactory.cs" />
+    <Compile Include="WordProofreadController.cs" />
+
     <Compile Include="DocumentSegmenter.cs" />
     <Compile Include="ProofreadCacheManager.cs" />
     <Compile Include="ProofreadIssueParser.cs" />
-    <Compile Include="ChatViewManager.cs" />
+
     <Compile Include="ProofreadResultRenderer.cs" />
     <Compile Include="ChatMessage.cs" />
+    <Compile Include="Models\ProofreadModels.cs" />
+    <Compile Include="ViewModels\ChatMessageViewModel.cs" />
+    <Compile Include="ViewModels\RelayCommand.cs" />
+    <Compile Include="ViewModels\Converters.cs" />
+    <Compile Include="ViewModels\ComplexMessageViewModel.cs" />
     <Compile Include="GOWordAgentPaneHost.cs">
       <SubType>UserControl</SubType>
     </Compile>

@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:vm="clr-namespace:GOWordAgentAddIn.ViewModels"
              mc:Ignorable="d" 
              d:DesignHeight="700" d:DesignWidth="430"
              Background="#FFFAFA">
@@ -55,6 +56,9 @@
             <Setter Property="FontSize" Value="13"/>
         </Style>
         
+        <!-- 按钮圆角附加属性 -->
+        <CornerRadius x:Key="DefaultButtonCornerRadius">6</CornerRadius>
+        
         <Style x:Key="PrimaryButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="{StaticResource PrimaryColor}"/>
             <Setter Property="Foreground" Value="White"/>
@@ -63,17 +67,25 @@
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Tag" Value="{StaticResource DefaultButtonCornerRadius}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border Background="{TemplateBinding Background}" 
-                                CornerRadius="6"
+                                CornerRadius="{TemplateBinding Tag}"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+        
+        <Style x:Key="OutlineButtonStyle" TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryColor}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderColor}"/>
+            <Setter Property="BorderThickness" Value="1"/>
         </Style>
         
         <Style x:Key="NavButtonStyle" TargetType="Button">
@@ -99,6 +111,70 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        
+        <!-- Message Bubble Colors -->
+        <SolidColorBrush x:Key="SystemBubbleColor" Color="#E8F2FC"/>
+        <SolidColorBrush x:Key="ErrorBubbleColor" Color="#FFEBEE"/>
+        <SolidColorBrush x:Key="ErrorTextColor" Color="#C62828"/>
+        
+        <!-- Complex Message DataTemplate -->
+        <DataTemplate x:Key="ComplexMessageTemplate" DataType="{x:Type vm:ComplexMessageViewModel}">
+            <Grid HorizontalAlignment="{Binding HorizontalAlignment}" Margin="0,0,0,8">
+                <ContentPresenter Content="{Binding Content}"/>
+            </Grid>
+        </DataTemplate>
+        
+        <!-- Message Bubble DataTemplate -->
+        <DataTemplate x:Key="MessageBubbleTemplate" DataType="{x:Type vm:ChatMessageViewModel}">
+            <Grid HorizontalAlignment="{Binding IsUser, Converter={StaticResource BoolToAlignmentConverter}}" 
+                  Margin="0,0,0,8">
+                <Border Background="{Binding MessageType, Converter={StaticResource MessageTypeToBrushConverter}}"
+                        CornerRadius="{Binding IsUser, Converter={StaticResource BoolToCornerRadiusConverter}}"
+                        Padding="12,10" MaxWidth="350">
+                    <StackPanel>
+                        <!-- Header: Sender + Time + Copy Button -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock FontSize="10" Foreground="{StaticResource TextSecondaryColor}" 
+                                       VerticalAlignment="Center">
+                                <TextBlock.Text>
+                                    <MultiBinding StringFormat="{}{0} {1}">
+                                        <Binding Path="Sender"/>
+                                        <Binding Path="Time"/>
+                                    </MultiBinding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                            <Button Grid.Column="1" Content="{Binding CopyButtonText}"
+                                    FontSize="9" Foreground="{StaticResource TextSecondaryColor}"
+                                    Background="Transparent" BorderThickness="0"
+                                    Padding="4,0,0,0" Cursor="Hand"
+                                    Command="{Binding CopyCommand}"
+                                    Visibility="{Binding ShowCopyButton, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                        </Grid>
+                        <!-- Content -->
+                        <TextBlock Text="{Binding Content}" FontSize="13" 
+                                   TextWrapping="Wrap" Margin="0,6,0,0">
+                            <TextBlock.Foreground>
+                                <Binding Path="IsError">
+                                    <Binding.Converter>
+                                        <vm:BoolToErrorBrushConverter/>
+                                    </Binding.Converter>
+                                </Binding>
+                            </TextBlock.Foreground>
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </DataTemplate>
+        
+        <!-- Converters -->
+        <vm:BoolToAlignmentConverter x:Key="BoolToAlignmentConverter"/>
+        <vm:MessageTypeToBrushConverter x:Key="MessageTypeToBrushConverter"/>
+        <vm:BoolToCornerRadiusConverter x:Key="BoolToCornerRadiusConverter"/>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
     </UserControl.Resources>
     
     <Grid>
@@ -132,29 +208,18 @@
                 <!-- Action Buttons -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
                     <Button x:Name="BtnProofread" Content="纠错（审阅）"
-                            Background="{StaticResource PrimaryColor}" Foreground="White"
-                            BorderThickness="0" Padding="10,5" FontSize="12" FontWeight="SemiBold"
-                            Cursor="Hand" Margin="0,0,8,0">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                            </ControlTemplate>
-                        </Button.Template>
+                            Style="{StaticResource PrimaryButtonStyle}"
+                            Padding="10,5" FontSize="12" Margin="0,0,8,0">
+                        <Button.Tag>
+                            <CornerRadius>4</CornerRadius>
+                        </Button.Tag>
                     </Button>
                     <Button x:Name="BtnClear" Content="清空" Click="BtnClear_Click"
-                            Background="Transparent" Foreground="{StaticResource TextSecondaryColor}"
-                            BorderBrush="{StaticResource BorderColor}" BorderThickness="1" 
-                            Padding="10,5" FontSize="12" Cursor="Hand">
-                        <Button.Template>
-                            <ControlTemplate TargetType="Button">
-                                <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" 
-                                        BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                </Border>
-                            </ControlTemplate>
-                        </Button.Template>
+                            Style="{StaticResource OutlineButtonStyle}"
+                            Padding="10,5" FontSize="12">
+                        <Button.Tag>
+                            <CornerRadius>4</CornerRadius>
+                        </Button.Tag>
                     </Button>
                 </StackPanel>
             </Grid>
@@ -163,9 +228,64 @@
         <!-- Chat Content -->
         <ScrollViewer x:Name="ChatScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" 
                       Margin="10" Visibility="Visible">
-            <StackPanel x:Name="ChatMessagesPanel">
-                <!-- Messages will be added programmatically -->
-            </StackPanel>
+            <ItemsControl x:Name="ChatMessagesControl">
+                <ItemsControl.Resources>
+                    <DataTemplate DataType="{x:Type vm:ChatMessageViewModel}">
+                        <Grid HorizontalAlignment="{Binding IsUser, Converter={StaticResource BoolToAlignmentConverter}}" 
+                              Margin="0,0,0,8">
+                            <Border Background="{Binding MessageType, Converter={StaticResource MessageTypeToBrushConverter}}"
+                                    CornerRadius="{Binding IsUser, Converter={StaticResource BoolToCornerRadiusConverter}}"
+                                    Padding="12,10" MaxWidth="350">
+                                <StackPanel>
+                                    <!-- Header: Sender + Time + Copy Button -->
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock FontSize="10" Foreground="{StaticResource TextSecondaryColor}" 
+                                                   VerticalAlignment="Center">
+                                            <TextBlock.Text>
+                                                <MultiBinding StringFormat="{}{0} {1}">
+                                                    <Binding Path="Sender"/>
+                                                    <Binding Path="Time"/>
+                                                </MultiBinding>
+                                            </TextBlock.Text>
+                                        </TextBlock>
+                                        <Button Grid.Column="1" Content="{Binding CopyButtonText}"
+                                                FontSize="9" Foreground="{StaticResource TextSecondaryColor}"
+                                                Background="Transparent" BorderThickness="0"
+                                                Padding="4,0,0,0" Cursor="Hand"
+                                                Command="{Binding CopyCommand}"
+                                                Visibility="{Binding ShowCopyButton, Converter={StaticResource BoolToVisibilityConverter}}"/>
+                                    </Grid>
+                                    <!-- Content -->
+                                    <TextBlock Text="{Binding Content}" FontSize="13" 
+                                               TextWrapping="Wrap" Margin="0,6,0,0">
+                                        <TextBlock.Foreground>
+                                            <Binding Path="IsError">
+                                                <Binding.Converter>
+                                                    <vm:BoolToErrorBrushConverter/>
+                                                </Binding.Converter>
+                                            </Binding>
+                                        </TextBlock.Foreground>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </DataTemplate>
+                    <DataTemplate DataType="{x:Type vm:ComplexMessageViewModel}">
+                        <Grid HorizontalAlignment="{Binding HorizontalAlignment}" Margin="0,0,0,8">
+                            <ContentPresenter Content="{Binding Content}"/>
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.Resources>
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+            </ItemsControl>
         </ScrollViewer>
         
         <!-- Settings Content -->
