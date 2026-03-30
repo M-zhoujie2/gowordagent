@@ -82,6 +82,22 @@
 3. 大文档（>3000字）会自动分段处理
 4. 缓存仅在当前 Word 会话有效，关闭后清空
 
+## 项目文档
+
+详见 [docs](./docs) 目录：
+
+| 文档 | 说明 |
+|------|------|
+| [缺陷修复报告](./docs/BUGFIX_REPORT.md) | 已知问题及修复记录 |
+| [代码审查修复](./docs/CODE_REVIEW_FIXES.md) | 代码审查发现的问题及修复 |
+| [最终修复记录](./docs/FINAL_FIXES.md) | 最终版本修复详情 |
+| [优化完成总结](./docs/OPTIMIZATION_COMPLETE.md) | 优化工作总结 |
+| [最终优化方案](./docs/OPTIMIZATION_FINAL.md) | 最终阶段优化详情 |
+| [优化计划](./docs/OPTIMIZATION_PLAN.md) | 项目优化计划 |
+| [优化状态报告](./docs/OPTIMIZATION_STATUS.md) | 优化进度跟踪 |
+| [安全审计报告](./docs/SECURITY_AUDIT_REPORT.md) | 安全扫描及审计结果 |
+| [技术架构概述](./docs/TECHNICAL_OVERVIEW.md) | 系统架构及技术实现 |
+
 ## 相关链接
 
 - 原项目地址：https://github.com/jsxyhelu/GOWordAgentAddIn.git

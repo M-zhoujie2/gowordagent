@@ -1,5 +1,4 @@
 using Microsoft.Office.Tools.Ribbon;
-using System;
 
 namespace GOWordAgentAddIn
 {

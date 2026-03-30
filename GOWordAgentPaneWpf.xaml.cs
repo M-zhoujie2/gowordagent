@@ -745,37 +745,6 @@ namespace GOWordAgentAddIn
         }
 
         /// <summary>
-        /// 合并所有段落结果
-        /// </summary>
-        private string CombineResults(List<ParagraphResult> results)
-        {
-            var sb = new System.Text.StringBuilder();
-            int totalIssues = 0;
-
-            foreach (var result in results.OrderBy(r => r.Index))
-            {
-                if (!string.IsNullOrWhiteSpace(result.ResultText))
-                {
-                    var issues = ProofreadService.CountIssues(result.ResultText);
-                    totalIssues += issues;
-                    
-                    if (issues > 0)
-                    {
-                        sb.AppendLine($"【第 {result.Index + 1} 段】{(result.IsCached ? "(缓存)" : "")}");
-                        sb.AppendLine(result.ResultText);
-                        sb.AppendLine();
-                    }
-                }
-            }
-
-            // 添加统计报告
-            var report = ProofreadService.GenerateReport(results);
-            sb.AppendLine(report);
-
-            return sb.ToString();
-        }
-
-        /// <summary>
         /// 生成详细校对报告（用于聊天框显示）
         /// </summary>
         private string GenerateProofreadReport(List<ParagraphResult> results, int totalChars, TimeSpan elapsed)
@@ -982,6 +951,7 @@ namespace GOWordAgentAddIn
 
         /// <summary>
         /// 应用批注到文档，使用 Word 原生修订显示
+        /// 优化：先为所有问题项查找位置，然后按位置倒序处理（从后往前），避免偏移问题
         /// </summary>
         private List<ProofreadIssueItem> ApplyProofreadToDocument(List<ProofreadIssueItem> items)
         {
@@ -997,7 +967,52 @@ namespace GOWordAgentAddIn
 
                     try
                     {
-                        var processedItems = service.ApplyRevisions(items);
+                        // 第一步：为所有问题项查找位置（此时文档还未修改）
+                        var itemsWithPosition = new List<(ProofreadIssueItem item, int start, int end)>();
+                        foreach (var item in items)
+                        {
+                            if (item == null) continue;
+                            
+                            // 使用原文查找位置
+                            var (found, start, end) = service.FindTextPosition(item.Original);
+                            if (found)
+                            {
+                                itemsWithPosition.Add((item, start, end));
+                                System.Diagnostics.Debug.WriteLine($"[ApplyProofreadToDocument] 找到 '{item.Original.Substring(0, Math.Min(10, item.Original.Length))}...' 在位置 {start}-{end}");
+                            }
+                            else
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[ApplyProofreadToDocument] 未找到: '{item.Original.Substring(0, Math.Min(10, item.Original.Length))}...'");
+                            }
+                        }
+                        
+                        // 第二步：按位置倒序排列（从文档末尾到开头）
+                        // 这样替换时不会影响前面（文档头部）的位置
+                        itemsWithPosition = itemsWithPosition.OrderByDescending(x => x.start).ToList();
+                        
+                        // 第三步：逐个使用确切位置替换
+                        var processedItems = new List<ProofreadIssueItem>();
+                        foreach (var (item, start, end) in itemsWithPosition)
+                        {
+                            try
+                            {
+                                if (service.ApplyRevisionAtRange(start, end, item.Original, item.Modified, 
+                                    BuildCommentText(item), out int newStart, out int newEnd))
+                                {
+                                    item.DocumentStart = newStart;
+                                    item.DocumentEnd = newEnd;
+                                    processedItems.Add(item);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"[ApplyProofreadToDocument] 处理项目时出错: {ex.Message}");
+                            }
+                        }
+                        
+                        // 按原始索引顺序返回
+                        processedItems = processedItems.OrderBy(i => i.Index).ToList();
+                        
                         if (processedItems.Count > 0)
                             AddMessageBubble("系统", $"已将 {processedItems.Count} 条诊断以批注/修订形式写入文档。", false);
                         return processedItems;
@@ -1015,6 +1030,19 @@ namespace GOWordAgentAddIn
                 System.Diagnostics.Debug.WriteLine($"[ApplyProofreadToDocument] 调度错误: {ex.Message}");
                 return new List<ProofreadIssueItem>();
             }
+        }
+        
+        /// <summary>
+        /// 构建批注文本
+        /// </summary>
+        private string BuildCommentText(ProofreadIssueItem item)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"【第{item.Index}处】类型：{item.Type}{(string.IsNullOrEmpty(item.Severity) ? "" : $"｜严重度：{item.Severity}")}");
+            sb.AppendLine($"原文：{item.Original}");
+            sb.AppendLine($"修改：{item.Modified}");
+            sb.AppendLine($"理由：{item.Reason}");
+            return sb.ToString();
         }
 
         /// <summary>

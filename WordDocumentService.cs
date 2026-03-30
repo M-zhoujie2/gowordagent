@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using Word = Microsoft.Office.Interop.Word;
@@ -164,17 +165,35 @@ namespace GOWordAgentAddIn
         }
 
         /// <summary>
-        /// 应用多个修订到文档
+        /// 应用多个修订到文档（按位置倒序处理，避免偏移问题）
         /// </summary>
         public List<ProofreadIssueItem> ApplyRevisions(List<ProofreadIssueItem> items)
         {
             var processedItems = new List<ProofreadIssueItem>();
             if (!IsDocumentValid()) return processedItems;
 
+            // 为每个项目找到匹配位置，然后按位置倒序排列（从后往前处理）
+            var itemsWithPosition = new List<(ProofreadIssueItem item, int start, int end)>();
+            
+            // 第一步：为所有项目查找匹配位置（此时文档还未修改）
             foreach (var item in items)
             {
                 if (item == null) continue;
                 
+                var (found, start, end) = FindTextPosition(item.Original);
+                if (found)
+                {
+                    itemsWithPosition.Add((item, start, end));
+                }
+            }
+            
+            // 第二步：按位置倒序排列（从文档末尾到开头）
+            // 这样替换时不会影响前面（文档头部）的位置
+            itemsWithPosition = itemsWithPosition.OrderByDescending(x => x.start).ToList();
+            
+            // 第三步：逐个替换
+            foreach (var (item, start, end) in itemsWithPosition)
+            {
                 try
                 {
                     var commentBuilder = new StringBuilder();
@@ -183,10 +202,11 @@ namespace GOWordAgentAddIn
                     commentBuilder.AppendLine($"修改：{item.Modified}");
                     commentBuilder.AppendLine($"理由：{item.Reason}");
 
-                    if (ApplyRevision(item.Original, item.Modified, commentBuilder.ToString(), out int start, out int end))
+                    // 使用记录的位置直接替换，而不是重新 Find
+                    if (ApplyRevisionAtRange(start, end, item.Original, item.Modified, commentBuilder.ToString(), out int newStart, out int newEnd))
                     {
-                        item.DocumentStart = start;
-                        item.DocumentEnd = end;
+                        item.DocumentStart = newStart;
+                        item.DocumentEnd = newEnd;
                         processedItems.Add(item);
                     }
                 }
@@ -196,7 +216,93 @@ namespace GOWordAgentAddIn
                 }
             }
 
-            return processedItems;
+            // 按原始顺序返回处理结果（保持索引顺序）
+            return processedItems.OrderBy(i => i.Index).ToList();
+        }
+        
+        /// <summary>
+        /// 查找文本在文档中的位置
+        /// </summary>
+        public (bool found, int start, int end) FindTextPosition(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return (false, -1, -1);
+            
+            Word.Range searchRange = null;
+            Word.Find find = null;
+            
+            try
+            {
+                searchRange = _document.Content;
+                find = searchRange.Find;
+                
+                bool found = find.Execute(FindText: text, MatchCase: false, MatchWholeWord: false,
+                                          MatchWildcards: false, Forward: true, Wrap: Word.WdFindWrap.wdFindStop);
+                
+                if (found)
+                {
+                    return (true, searchRange.Start, searchRange.End);
+                }
+            }
+            finally
+            {
+                if (find != null) Marshal.ReleaseComObject(find);
+                if (searchRange != null) Marshal.ReleaseComObject(searchRange);
+            }
+            
+            return (false, -1, -1);
+        }
+        
+        /// <summary>
+        /// 在指定范围内应用修订（使用确切位置）
+        /// </summary>
+        public bool ApplyRevisionAtRange(int start, int end, string original, string modified, string commentText, out int newStart, out int newEnd)
+        {
+            newStart = -1;
+            newEnd = -1;
+            
+            if (!IsDocumentValid()) return false;
+            if (start < 0 || end <= start) return false;
+            
+            Word.Range range = null;
+            Word.Comment comment = null;
+            
+            try
+            {
+                // 直接定位到指定范围
+                range = _document.Range(start, end);
+                
+                // 验证内容是否匹配（可选的安全检查）
+                if (range.Text != original)
+                {
+                    // 内容不匹配，尝试用 Find 在当前范围附近查找
+                    Word.Find find = range.Find;
+                    bool found = find.Execute(FindText: original, MatchCase: false, MatchWholeWord: false,
+                                              MatchWildcards: false, Forward: true, Wrap: Word.WdFindWrap.wdFindStop);
+                    Marshal.ReleaseComObject(find);
+                    
+                    if (!found) return false;
+                }
+                
+                bool oldTrackRevisions = _document.TrackRevisions;
+                try
+                {
+                    _document.TrackRevisions = true;
+                    range.Text = modified;
+                    comment = _document.Comments.Add(range, commentText);
+                    newStart = range.Start;
+                    newEnd = range.End;
+                    return true;
+                }
+                finally
+                {
+                    _document.TrackRevisions = oldTrackRevisions;
+                }
+            }
+            finally
+            {
+                if (comment != null) Marshal.ReleaseComObject(comment);
+                if (range != null) Marshal.ReleaseComObject(range);
+            }
         }
 
         /// <summary>
