@@ -91,10 +91,10 @@
 
 | 文档 | 说明 |
 |------|------|
-| [架构说明](./docs/ARCHITECTURE.md) | 项目架构、数据流、技术细节 |
-| [API 文档](./docs/API.md) | 服务接口、数据模型说明 |
-| [使用指南](./docs/USAGE.md) | 安装配置、故障排除 |
-| [更新日志](./docs/CHANGELOG.md) | 版本变更记录 |
+| [架构说明](./Docs/ARCHITECTURE.md) | 项目架构、数据流、技术细节 |
+| [API 文档](./Docs/API.md) | 服务接口、数据模型说明 |
+| [使用指南](./Docs/USAGE.md) | 安装配置、故障排除 |
+| [更新日志](./Docs/CHANGELOG.md) | 版本变更记录 |
 
 ## 相关链接
 
