@@ -319,20 +319,11 @@ namespace GOWordAgentAddIn
                     start = searchRange.Start;
                     end = searchRange.End;
 
-                    // 尝试使用修订模式（TrackRevisions），失败时降级为普通替换
+                    // 尝试使用修订模式（TrackRevisions），失败时降级处理
                     if (!TryApplyWithRevisions(searchRange, modified, commentText, out comment))
                     {
-                        // 降级：不使用修订模式，直接替换
-                        searchRange.Text = modified;
-                        try
-                        {
-                            comment = _document.Comments.Add(searchRange, commentText);
-                        }
-                        catch (COMException ex)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"[ApplyRevision] 添加批注失败: {ex.Message}");
-                            // 批注失败不影响主功能
-                        }
+                        // 降级：使用原文标记+降级提示
+                        ApplyDegradedRevision(searchRange, original, modified, commentText, out comment);
                     }
                     end = searchRange.End;
                     return true;
@@ -526,6 +517,41 @@ namespace GOWordAgentAddIn
         }
 
         /// <summary>
+        /// 降级处理：当修订模式不支持时，使用原文标记+降级提示的方式
+        /// 格式：[原文：xxx] 修改后内容
+        /// </summary>
+        private void ApplyDegradedRevision(Word.Range range, string original, string modified, string commentText, out Word.Comment comment)
+        {
+            comment = null;
+            try
+            {
+                // 构建带原文标记的降级文本
+                string degradedText = $"[原文：{original}] {modified}";
+                range.Text = degradedText;
+                
+                // 添加降级提示批注
+                string degradedComment = $"{commentText}\n\n" +
+                    $"⚠️ 提示：当前 Word 版本不支持修订模式（TrackRevisions），已直接替换文本。\n" +
+                    $"如需恢复原文，请手动删除\"[原文：...]\"部分。";
+                
+                try
+                {
+                    comment = _document.Comments.Add(range, degradedComment);
+                }
+                catch (COMException ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[ApplyDegradedRevision] 添加批注失败: {ex.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ApplyDegradedRevision] 降级处理失败: {ex.Message}");
+                // 最后兜底：直接替换
+                try { range.Text = modified; } catch { }
+            }
+        }
+
+        /// <summary>
         /// 在指定范围内应用修订（使用确切位置）
         /// </summary>
         public bool ApplyRevisionAtRange(int start, int end, string original, string modified, string commentText, out int newStart, out int newEnd)
@@ -580,16 +606,8 @@ namespace GOWordAgentAddIn
                 // 尝试使用修订模式，失败时降级
                 if (!TryApplyWithRevisions(range, modified, commentText, out comment))
                 {
-                    // 降级：不使用修订模式
-                    range.Text = modified;
-                    try
-                    {
-                        comment = _document.Comments.Add(range, commentText);
-                    }
-                    catch (COMException ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[ApplyRevisionAtRange] 添加批注失败: {ex.Message}");
-                    }
+                    // 降级：使用原文标记+降级提示
+                    ApplyDegradedRevision(range, original, modified, commentText, out comment);
                 }
                 newStart = range.Start;
                 newEnd = range.End;
@@ -646,50 +664,19 @@ namespace GOWordAgentAddIn
 
         /// <summary>
         /// 通过原文搜索定位
+        /// 策略：复用 FindTextPosition 的三级匹配策略（精确→整词→宽松）
         /// </summary>
         public bool NavigateBySearch(string originalText)
         {
             if (!IsDocumentValid()) return false;
             if (string.IsNullOrWhiteSpace(originalText)) return false;
 
-            Word.Range searchRange = null;
-            Word.Find find = null;
-            Word.Window activeWindow = null;
-            try
-            {
-                searchRange = _document.Content;
-                find = searchRange.Find;
-                
-                if (find.Execute(FindText: originalText, MatchCase: false, MatchWholeWord: false,
-                                  MatchWildcards: false, Forward: true, Wrap: Word.WdFindWrap.wdFindStop))
-                {
-                    searchRange.Select();
-                    activeWindow = _application.ActiveWindow;
-                    
-                    // ScrollIntoView 在 Word 2010 部分版本可能不支持，添加保护
-                    try
-                    {
-                        activeWindow.ScrollIntoView(searchRange);
-                    }
-                    catch (COMException ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[NavigateBySearch] ScrollIntoView 不支持或失败: {ex.Message}");
-                    }
-                    return true;
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[NavigateBySearch] 搜索定位失败: {ex.Message}");
-            }
-            finally
-            {
-                if (activeWindow != null) Marshal.ReleaseComObject(activeWindow);
-                if (find != null) Marshal.ReleaseComObject(find);
-                if (searchRange != null) Marshal.ReleaseComObject(searchRange);
-            }
+            // 使用 FindTextPosition 的三级匹配策略查找位置
+            var (found, start, end) = FindTextPosition(originalText);
+            if (!found) return false;
 
-            return false;
+            // 导航到找到的位置
+            return NavigateToRange(start, end);
         }
 
         /// <summary>
