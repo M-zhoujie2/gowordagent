@@ -17,7 +17,7 @@ namespace GOWordAgentAddIn
     public partial class GOWordAgentPaneWpf : UserControl
     {
         private ILLMService _llmService;
-        private List<object> _messageHistory = new List<object>();
+        private List<ChatMessage> _messageHistory = new List<ChatMessage>();
         private AIProvider _currentProvider = AIProvider.DeepSeek;
 
         private static readonly SolidColorBrush _primaryColor = CreateFrozenBrush(0, 120, 212);
@@ -27,9 +27,6 @@ namespace GOWordAgentAddIn
         private static readonly SolidColorBrush _textPrimaryColor = CreateFrozenBrush(34, 34, 34);
         private static readonly SolidColorBrush _textSecondaryColor = CreateFrozenBrush(153, 153, 153);
         
-        // 预编译的正则表达式（提高性能）
-        private static readonly Regex _categoryRegex = new Regex(@"【第\d+处】类型：([^\r\n:]+)", RegexOptions.Compiled);
-        private static readonly Regex _proofreadItemRegex = new Regex(@"【第(?<index>\d+)处】类型：(?<type>[^\r\n|]+)(?:[｜|]严重度：(?<severity>[^\r\n]+))?\r?\n原文：(?<original>.*?)\r?\n修改：(?<modified>.*?)\r?\n理由：(?<reason>.*?)(?=\r?\n【第|$)", RegexOptions.Singleline | RegexOptions.Compiled);
         
         /// <summary>
         /// 创建冻结的 SolidColorBrush（提高性能，允许跨线程使用）
@@ -304,6 +301,19 @@ namespace GOWordAgentAddIn
 
         private async void BtnConnect_Click(object sender, RoutedEventArgs e)
         {
+            try
+            {
+                await BtnConnectClickInternal();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[BtnConnect_Click] 未捕获异常: {ex}");
+                UpdateStatus("连接失败", Brushes.Red);
+            }
+        }
+        
+        private async Task BtnConnectClickInternal()
+        {
             string apiKey = TxtApiKey.Password?.Trim();
             if (string.IsNullOrWhiteSpace(apiKey))
             {
@@ -329,6 +339,20 @@ namespace GOWordAgentAddIn
 
         private async void BtnSend_Click(object sender, RoutedEventArgs e)
         {
+            try
+            {
+                await BtnSendClickInternal();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[BtnSend_Click] 未捕获异常: {ex}");
+                AddMessageBubble("错误", "发送消息失败，请重试", false, true);
+                BtnSend.IsEnabled = true;
+            }
+        }
+        
+        private async Task BtnSendClickInternal()
+        {
             if (_llmService == null)
             {
                 MessageBox.Show("请先点击「保存并连接」按钮连接大模型", "提示", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -348,13 +372,15 @@ namespace GOWordAgentAddIn
             BtnSend.IsEnabled = false;
             UpdateStatus($"{_llmService.ProviderName} 正在思考...", _primaryColor);
 
-            _messageHistory.Add(new { role = "user", content = userMessage });
+            _messageHistory.Add(new ChatMessage(ChatRole.User, userMessage));
 
             try
             {
-                string response = await _llmService.SendMessagesWithHistoryAsync(_messageHistory);
+                // 转换为 LLM API 格式
+                var messagesForLLM = _messageHistory.ConvertAll(m => m.ToLLMFormat());
+                string response = await _llmService.SendMessagesWithHistoryAsync(messagesForLLM);
                 AddMessageBubble(_llmService.ProviderName, response, false);
-                _messageHistory.Add(new { role = "assistant", content = response });
+                _messageHistory.Add(new ChatMessage(ChatRole.AI, response));
                 UpdateStatus("就绪", Brushes.Green);
             }
             catch (Exception ex)
@@ -647,7 +673,7 @@ namespace GOWordAgentAddIn
                 {
                     if (!string.IsNullOrWhiteSpace(result.ResultText))
                     {
-                        allIssues.AddRange(ParseProofreadItems(result.ResultText));
+                        allIssues.AddRange(ProofreadIssueParser.ParseProofreadItems(result.ResultText));
                     }
                 }
                 
@@ -770,10 +796,10 @@ namespace GOWordAgentAddIn
             
             foreach (var result in results)
             {
-                int issues = CountIssues(result.ResultText);
+                int issues = ProofreadIssueParser.CountIssues(result.ResultText);
                 totalIssues += issues;
                 
-                var cats = CategorizeIssues(result.ResultText);
+                var cats = ProofreadIssueParser.CategorizeIssues(result.ResultText);
                 foreach (var kv in cats)
                 {
                     if (allCategories.ContainsKey(kv.Key))
@@ -824,10 +850,10 @@ namespace GOWordAgentAddIn
             
             foreach (var result in results)
             {
-                int issues = CountIssues(result.ResultText);
+                int issues = ProofreadIssueParser.CountIssues(result.ResultText);
                 totalIssues += issues;
                 
-                var cats = CategorizeIssues(result.ResultText);
+                var cats = ProofreadIssueParser.CategorizeIssues(result.ResultText);
                 foreach (var kv in cats)
                 {
                     if (allCategories.ContainsKey(kv.Key))
@@ -858,58 +884,6 @@ namespace GOWordAgentAddIn
             return sb.ToString();
         }
 
-        /// <summary>
-        /// 统计问题数量
-        /// </summary>
-        private int CountIssues(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text)) return 0;
-            var matches = Regex.Matches(text, @"【第\d+处】");
-            return matches.Count;
-        }
-
-        /// <summary>
-        /// 按类型统计问题
-        /// </summary>
-        private Dictionary<string, int> CategorizeIssues(string text)
-        {
-            var categories = new Dictionary<string, int>();
-            if (string.IsNullOrWhiteSpace(text)) return categories;
-
-            // 匹配：【第X处】类型：xxx
-            foreach (Match match in _categoryRegex.Matches(text))
-            {
-                string cat = match.Groups[1].Value.Trim().TrimEnd('：', ':');
-                
-                // 归一化分类
-                if (cat.Contains("错别字") || cat.Contains("拼写"))
-                    cat = "错别字";
-                else if (cat.Contains("语病") || cat.Contains("语法") || cat.Contains("搭配") || cat.Contains("杂糅"))
-                    cat = "语病";
-                else if (cat.Contains("标点"))
-                    cat = "标点错误";
-                else if (cat.Contains("序号"))
-                    cat = "序号问题";
-                else if (cat.Contains("用词"))
-                    cat = "用词不当";
-                else if (cat.Contains("术语") || cat.Contains("不一致"))
-                    cat = "术语不一致";
-                else if (cat.Contains("格式"))
-                    cat = "格式问题";
-                else if (cat.Contains("逻辑") || cat.Contains("矛盾"))
-                    cat = "逻辑/矛盾";
-                else
-                    cat = "其他";
-
-                if (categories.ContainsKey(cat))
-                    categories[cat]++;
-                else
-                    categories[cat] = 1;
-            }
-
-            return categories;
-        }
-
         private string GetDocumentText()
         {
             try
@@ -923,30 +897,6 @@ namespace GOWordAgentAddIn
                 MessageBox.Show($"获取文档失败: {ex.Message}", "错误", MessageBoxButton.OK, MessageBoxImage.Error);
                 return null;
             }
-        }
-
-        private List<ProofreadIssueItem> ParseProofreadItems(string aiResponse)
-        {
-            var items = new List<ProofreadIssueItem>();
-            // 匹配完整的问题格式
-            int idx = 1;
-            foreach (Match match in _proofreadItemRegex.Matches(aiResponse))
-            {
-                string original = match.Groups["original"].Value.Trim();
-                if (!string.IsNullOrWhiteSpace(original))
-                {
-                    items.Add(new ProofreadIssueItem
-                    {
-                        Index = idx++,
-                        Type = match.Groups["type"].Value.Trim(),
-                        Severity = match.Groups["severity"].Value.Trim().ToLower(),
-                        Original = original,
-                        Modified = match.Groups["modified"].Value.Trim(),
-                        Reason = match.Groups["reason"].Value.Trim()
-                    });
-                }
-            }
-            return items;
         }
 
         /// <summary>
@@ -1356,6 +1306,8 @@ namespace GOWordAgentAddIn
 
     /// <summary>
     /// 校对问题项（带位置信息）
+    /// 注意：DocumentStart/DocumentEnd 仅在应用修订时有效，
+    /// 后续如果文档被修改，这些位置可能偏移。导航时应优先使用 Original 文本搜索。
     /// </summary>
     public class ProofreadIssueItem
     {
@@ -1366,11 +1318,11 @@ namespace GOWordAgentAddIn
         public string Reason { get; set; }
         public string Severity { get; set; }
         /// <summary>
-        /// 在文档中的起始位置（用于定位）
+        /// 在文档中的起始位置（仅作为缓存，多修订后可能偏移）
         /// </summary>
         public int DocumentStart { get; set; }
         /// <summary>
-        /// 在文档中的结束位置
+        /// 在文档中的结束位置（仅作为缓存，多修订后可能偏移）
         /// </summary>
         public int DocumentEnd { get; set; }
     }

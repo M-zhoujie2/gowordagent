@@ -1,0 +1,29 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    
+    <!-- 主题颜色 -->
+    <SolidColorBrush x:Key="PrimaryBrush" Color="#0078D4"/>
+    <SolidColorBrush x:Key="PrimaryLightBrush" Color="#E8F2FC"/>
+    
+    <!-- 聊天气泡颜色 -->
+    <SolidColorBrush x:Key="UserBubbleBrush" Color="#E3F2FD"/>
+    <SolidColorBrush x:Key="AIBubbleBrush" Color="#F5F5F5"/>
+    <SolidColorBrush x:Key="SystemBubbleBrush" Color="#E8F2FC"/>
+    <SolidColorBrush x:Key="ErrorBubbleBrush" Color="#FFEBEE"/>
+    
+    <!-- 文本颜色 -->
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="#222222"/>
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#999999"/>
+    <SolidColorBrush x:Key="ErrorTextBrush" Color="#C62828"/>
+    
+    <!-- 状态颜色 -->
+    <SolidColorBrush x:Key="SuccessBrush" Color="#4CAF50"/>
+    <SolidColorBrush x:Key="WarningBrush" Color="#FF9800"/>
+    <SolidColorBrush x:Key="ErrorBrush" Color="#F44336"/>
+    
+    <!-- 边框/分割线颜色 -->
+    <SolidColorBrush x:Key="BorderLightBrush" Color="#E0E0E0"/>
+    <SolidColorBrush x:Key="BorderMediumBrush" Color="#C8C8C8"/>
+    <SolidColorBrush x:Key="SeparatorBrush" Color="#C8C8C8"/>
+    
+</ResourceDictionary>

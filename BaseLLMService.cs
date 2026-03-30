@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -61,18 +62,18 @@ namespace GOWordAgentAddIn
             EnsureLogDirectoryExists();
         }
 
-        public virtual async Task<string> SendMessageAsync(string userMessage)
+        public virtual async Task<string> SendMessageAsync(string userMessage, CancellationToken cancellationToken = default)
         {
             var messages = new List<object> { new { role = "user", content = userMessage } };
-            return await SendRequestAsync(messages);
+            return await SendRequestAsync(messages, cancellationToken);
         }
 
-        public virtual async Task<string> SendMessagesWithHistoryAsync(List<object> messages)
+        public virtual async Task<string> SendMessagesWithHistoryAsync(List<object> messages, CancellationToken cancellationToken = default)
         {
-            return await SendRequestAsync(messages);
+            return await SendRequestAsync(messages, cancellationToken);
         }
 
-        public virtual async Task<string> SendProofreadMessageAsync(string systemContent, string userContent)
+        public virtual async Task<string> SendProofreadMessageAsync(string systemContent, string userContent, CancellationToken cancellationToken = default)
         {
             var requestInfo = new RequestLogInfo
             {
@@ -90,15 +91,15 @@ namespace GOWordAgentAddIn
             };
 
             string jsonContent = BuildProofreadRequestBody(messages);
-            string response = await PostAsync(jsonContent, requestInfo);
+            string response = await PostAsync(jsonContent, requestInfo, cancellationToken);
             
             return response;
         }
 
-        protected virtual async Task<string> SendRequestAsync(List<object> messages)
+        protected virtual async Task<string> SendRequestAsync(List<object> messages, CancellationToken cancellationToken = default)
         {
             string jsonContent = BuildRequestBody(messages);
-            return await PostAsync(jsonContent, null);
+            return await PostAsync(jsonContent, null, cancellationToken);
         }
 
         protected virtual string ParseResponse(JObject jsonResponse)
@@ -132,7 +133,7 @@ namespace GOWordAgentAddIn
             return JsonConvert.SerializeObject(requestBody);
         }
 
-        protected virtual async Task<string> PostAsync(string jsonContent, RequestLogInfo logInfo)
+        protected virtual async Task<string> PostAsync(string jsonContent, RequestLogInfo logInfo, CancellationToken cancellationToken = default)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             string responseBody = null;
@@ -144,7 +145,7 @@ namespace GOWordAgentAddIn
 
                 using (var content = new StringContent(jsonContent, Encoding.UTF8, "application/json"))
                 {
-                    HttpResponseMessage response = await _httpClient.PostAsync(_apiUrl, content)
+                    HttpResponseMessage response = await _httpClient.PostAsync(_apiUrl, content, cancellationToken)
                         .ConfigureAwait(false);
                     
                     responseBody = await response.Content.ReadAsStringAsync()
@@ -186,6 +187,23 @@ namespace GOWordAgentAddIn
 
                     return $"API 调用失败: {response.StatusCode}\n{responseBody}";
                 }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                stopwatch.Stop();
+                string errorMsg = "请求已取消";
+                
+                if (logInfo != null)
+                {
+                    logInfo.ResponseTime = DateTime.Now;
+                    logInfo.ElapsedMs = stopwatch.ElapsedMilliseconds;
+                    logInfo.ResponseContent = errorMsg;
+                    logInfo.IsSuccess = false;
+                    WriteLog(logInfo);
+                }
+                
+                // 重新抛出，让上层处理取消
+                throw;
             }
             catch (TaskCanceledException)
             {

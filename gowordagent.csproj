@@ -215,9 +215,17 @@
     <Compile Include="MessageBubbleFactory.cs" />
     <Compile Include="DocumentSegmenter.cs" />
     <Compile Include="ProofreadCacheManager.cs" />
+    <Compile Include="ProofreadIssueParser.cs" />
+    <Compile Include="ChatViewManager.cs" />
+    <Compile Include="ProofreadResultRenderer.cs" />
+    <Compile Include="ChatMessage.cs" />
     <Compile Include="GOWordAgentPaneHost.cs">
       <SubType>UserControl</SubType>
     </Compile>
+    <Page Include="Themes\Colors.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
     <Page Include="GOWordAgentPaneWpf.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>

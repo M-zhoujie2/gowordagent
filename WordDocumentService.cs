@@ -222,6 +222,9 @@ namespace GOWordAgentAddIn
         
         /// <summary>
         /// 查找文本在文档中的位置
+        /// 策略：1) 优先精确匹配（MatchCase=true, MatchWholeWord=true）
+        ///       2) 如果失败，尝试宽松匹配（对长文本更严格，短文本更宽松）
+        ///       3) 对短文本（<=2字）必须整词匹配，避免匹配到错误位置
         /// </summary>
         public (bool found, int start, int end) FindTextPosition(string text)
         {
@@ -235,12 +238,55 @@ namespace GOWordAgentAddIn
                 searchRange = _document.Content;
                 find = searchRange.Find;
                 
-                bool found = find.Execute(FindText: text, MatchCase: false, MatchWholeWord: false,
-                                          MatchWildcards: false, Forward: true, Wrap: Word.WdFindWrap.wdFindStop);
+                // 短文本（1-2个字符）必须整词匹配，避免 "的" 匹配到所有 "的" 字
+                bool isShortText = text.Length <= 2;
+                
+                // 第1步：尝试精确匹配（区分大小写 + 整词匹配）
+                bool found = find.Execute(FindText: text, 
+                                          MatchCase: true, 
+                                          MatchWholeWord: true,
+                                          MatchWildcards: false, 
+                                          Forward: true, 
+                                          Wrap: Word.WdFindWrap.wdFindStop);
+                
+                if (found)
+                {
+                    // 验证：短文本直接返回，长文本验证内容
+                    if (!isShortText || searchRange.Text == text)
+                    {
+                        return (true, searchRange.Start, searchRange.End);
+                    }
+                }
+                
+                // 第2步：如果精确匹配失败，尝试不区分大小写但仍整词匹配
+                find = searchRange.Find; // 重新获取 Find 对象
+                found = find.Execute(FindText: text, 
+                                     MatchCase: false, 
+                                     MatchWholeWord: true,
+                                     MatchWildcards: false, 
+                                     Forward: true, 
+                                     Wrap: Word.WdFindWrap.wdFindStop);
                 
                 if (found)
                 {
                     return (true, searchRange.Start, searchRange.End);
+                }
+                
+                // 第3步：对于长文本（>5字），允许宽松匹配（不整词），因为可能是句子片段
+                if (text.Length > 5)
+                {
+                    find = searchRange.Find;
+                    found = find.Execute(FindText: text, 
+                                         MatchCase: false, 
+                                         MatchWholeWord: false,
+                                         MatchWildcards: false, 
+                                         Forward: true, 
+                                         Wrap: Word.WdFindWrap.wdFindStop);
+                    
+                    if (found)
+                    {
+                        return (true, searchRange.Start, searchRange.End);
+                    }
                 }
             }
             finally
@@ -275,9 +321,30 @@ namespace GOWordAgentAddIn
                 if (range.Text != original)
                 {
                     // 内容不匹配，尝试用 Find 在当前范围附近查找
+                    // 使用整词匹配提高精度，避免短文本匹配错误
                     Word.Find find = range.Find;
-                    bool found = find.Execute(FindText: original, MatchCase: false, MatchWholeWord: false,
-                                              MatchWildcards: false, Forward: true, Wrap: Word.WdFindWrap.wdFindStop);
+                    bool isShortText = original?.Length <= 2;
+                    
+                    // 优先使用整词匹配
+                    bool found = find.Execute(FindText: original, 
+                                              MatchCase: false, 
+                                              MatchWholeWord: true,
+                                              MatchWildcards: false, 
+                                              Forward: true, 
+                                              Wrap: Word.WdFindWrap.wdFindStop);
+                    
+                    // 短文本必须整词匹配，长文本可以放宽
+                    if (!found && !isShortText && original?.Length > 5)
+                    {
+                        find = range.Find;
+                        found = find.Execute(FindText: original, 
+                                             MatchCase: false, 
+                                             MatchWholeWord: false,
+                                             MatchWildcards: false, 
+                                             Forward: true, 
+                                             Wrap: Word.WdFindWrap.wdFindStop);
+                    }
+                    
                     Marshal.ReleaseComObject(find);
                     
                     if (!found) return false;
@@ -376,6 +443,8 @@ namespace GOWordAgentAddIn
 
         /// <summary>
         /// 导航到校对问题项
+        /// 策略：优先使用原文搜索（最可靠），搜索失败时尝试使用缓存位置作为备用
+        /// 注意：DocumentStart/End 在多修订后可能偏移，仅作为缓存加速使用
         /// </summary>
         public void NavigateToIssue(ProofreadIssueItem item)
         {
@@ -394,13 +463,23 @@ namespace GOWordAgentAddIn
                 System.Diagnostics.Debug.WriteLine($"[NavigateToIssue] 激活窗口失败: {ex.Message}");
             }
 
-            // 优先使用位置定位
-            if (NavigateToRange(item.DocumentStart, item.DocumentEnd))
+            // 方案1：优先使用原文搜索（最可靠，不受修订偏移影响）
+            if (NavigateBySearch(item.Original))
+            {
+                System.Diagnostics.Debug.WriteLine($"[NavigateToIssue] 通过原文搜索定位成功: '{item.Original.Substring(0, Math.Min(20, item.Original.Length))}...'");
                 return;
+            }
 
-            // 备用方案：通过原文搜索
-            if (!NavigateBySearch(item.Original))
-                throw new InvalidOperationException("无法在文档中找到该位置，可能文本已被修改。");
+            // 方案2：原文搜索失败，尝试使用缓存位置（可能已偏移，仅作为备用）
+            if (item.DocumentStart >= 0 && item.DocumentEnd > item.DocumentStart)
+            {
+                System.Diagnostics.Debug.WriteLine($"[NavigateToIssue] 原文搜索失败，尝试使用缓存位置: {item.DocumentStart}-{item.DocumentEnd}");
+                if (NavigateToRange(item.DocumentStart, item.DocumentEnd))
+                    return;
+            }
+
+            // 都失败了
+            throw new InvalidOperationException("无法在文档中找到该位置，可能文本已被修改或删除。");
         }
 
         #region IDisposable

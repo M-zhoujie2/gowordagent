@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace GOWordAgentAddIn
@@ -16,17 +17,24 @@ namespace GOWordAgentAddIn
         /// <summary>
         /// 发送消息并获取响应
         /// </summary>
-        Task<string> SendMessageAsync(string userMessage);
+        /// <param name="userMessage">用户消息</param>
+        /// <param name="cancellationToken">取消令牌</param>
+        Task<string> SendMessageAsync(string userMessage, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// 发送带历史记录的消息
         /// </summary>
-        Task<string> SendMessagesWithHistoryAsync(List<object> messages);
+        /// <param name="messages">消息历史</param>
+        /// <param name="cancellationToken">取消令牌</param>
+        Task<string> SendMessagesWithHistoryAsync(List<object> messages, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// 发送纠错审阅请求（system + user）
         /// </summary>
-        Task<string> SendProofreadMessageAsync(string systemContent, string userContent);
+        /// <param name="systemContent">系统提示词</param>
+        /// <param name="userContent">用户内容</param>
+        /// <param name="cancellationToken">取消令牌</param>
+        Task<string> SendProofreadMessageAsync(string systemContent, string userContent, CancellationToken cancellationToken = default);
     }
 
     /// <summary>
