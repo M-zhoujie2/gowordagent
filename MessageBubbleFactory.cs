@@ -22,14 +22,24 @@ namespace GOWordAgentAddIn
     /// </summary>
     public static class MessageBubbleFactory
     {
-        // 默认颜色配置
-        private static readonly SolidColorBrush SystemBubbleColor = new SolidColorBrush(Color.FromRgb(232, 242, 252));
-        private static readonly SolidColorBrush UserBubbleColor = new SolidColorBrush(Color.FromRgb(227, 242, 253));
-        private static readonly SolidColorBrush AIBubbleColor = new SolidColorBrush(Color.FromRgb(245, 245, 245));
-        private static readonly SolidColorBrush ErrorBubbleColor = new SolidColorBrush(Color.FromRgb(255, 235, 238));
-        private static readonly SolidColorBrush ErrorTextColor = new SolidColorBrush(Color.FromRgb(198, 40, 40));
-        private static readonly SolidColorBrush TextPrimaryColor = new SolidColorBrush(Color.FromRgb(34, 34, 34));
-        private static readonly SolidColorBrush TextSecondaryColor = new SolidColorBrush(Color.FromRgb(153, 153, 153));
+        // 默认颜色配置（冻结的 Brush 提高性能，允许跨线程使用）
+        private static readonly SolidColorBrush SystemBubbleColor = CreateFrozenBrush(232, 242, 252);
+        private static readonly SolidColorBrush UserBubbleColor = CreateFrozenBrush(227, 242, 253);
+        private static readonly SolidColorBrush AIBubbleColor = CreateFrozenBrush(245, 245, 245);
+        private static readonly SolidColorBrush ErrorBubbleColor = CreateFrozenBrush(255, 235, 238);
+        private static readonly SolidColorBrush ErrorTextColor = CreateFrozenBrush(198, 40, 40);
+        private static readonly SolidColorBrush TextPrimaryColor = CreateFrozenBrush(34, 34, 34);
+        private static readonly SolidColorBrush TextSecondaryColor = CreateFrozenBrush(153, 153, 153);
+        
+        /// <summary>
+        /// 创建冻结的 SolidColorBrush
+        /// </summary>
+        private static SolidColorBrush CreateFrozenBrush(byte r, byte g, byte b)
+        {
+            var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+            brush.Freeze();
+            return brush;
+        }
 
         /// <summary>
         /// 创建消息气泡

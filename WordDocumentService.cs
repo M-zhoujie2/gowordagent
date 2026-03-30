@@ -9,10 +9,11 @@ namespace GOWordAgentAddIn
     /// <summary>
     /// Word 文档操作服务，封装所有 Word COM 交互
     /// </summary>
-    public class WordDocumentService
+    public class WordDocumentService : IDisposable
     {
         private readonly Word.Application _application;
         private readonly Word.Document _document;
+        private bool _disposed;
 
         public WordDocumentService(Word.Application application, Word.Document document)
         {
@@ -27,18 +28,65 @@ namespace GOWordAgentAddIn
         {
             if (app == null) throw new ArgumentNullException(nameof(app));
 
-            var doc = app.ActiveDocument;
-            if (doc == null) throw new InvalidOperationException("当前未打开任何文档。");
+            Word.Document doc = null;
+            Word.Window activeWindow = null;
+            Word.Selection selection = null;
+            Word.Range selectedRange = null;
+            Word.Range contentRange = null;
 
-            string selectedText = doc.ActiveWindow?.Selection?.Range?.Text ?? string.Empty;
-            string docText = !string.IsNullOrWhiteSpace(selectedText) 
-                ? selectedText 
-                : (doc.Content?.Text ?? string.Empty);
+            try
+            {
+                doc = app.ActiveDocument;
+                if (doc == null) throw new InvalidOperationException("当前未打开任何文档。");
 
-            if (string.IsNullOrWhiteSpace(docText))
-                throw new InvalidOperationException("文档正文为空。");
+                string selectedText = string.Empty;
+                
+                // 安全获取选中文本
+                try
+                {
+                    activeWindow = doc.ActiveWindow;
+                    if (activeWindow != null)
+                    {
+                        selection = activeWindow.Selection;
+                        if (selection != null)
+                        {
+                            selectedRange = selection.Range;
+                            if (selectedRange != null)
+                            {
+                                selectedText = selectedRange.Text ?? string.Empty;
+                            }
+                        }
+                    }
+                }
+                catch (COMException)
+                {
+                    selectedText = string.Empty;
+                }
 
-            return docText;
+                string docText;
+                if (!string.IsNullOrWhiteSpace(selectedText))
+                {
+                    docText = selectedText;
+                }
+                else
+                {
+                    contentRange = doc.Content;
+                    docText = contentRange?.Text ?? string.Empty;
+                }
+
+                if (string.IsNullOrWhiteSpace(docText))
+                    throw new InvalidOperationException("文档正文为空。");
+
+                return docText;
+            }
+            finally
+            {
+                if (selectedRange != null) Marshal.ReleaseComObject(selectedRange);
+                if (selection != null) Marshal.ReleaseComObject(selection);
+                if (activeWindow != null) Marshal.ReleaseComObject(activeWindow);
+                if (contentRange != null) Marshal.ReleaseComObject(contentRange);
+                if (doc != null) Marshal.ReleaseComObject(doc);
+            }
         }
 
         /// <summary>
@@ -46,14 +94,20 @@ namespace GOWordAgentAddIn
         /// </summary>
         public bool IsDocumentValid()
         {
+            Word.Range content = null;
             try
             {
-                var _ = _document.Content.Text;
+                content = _document.Content;
+                var _ = content.Text;
                 return true;
             }
             catch (COMException)
             {
                 return false;
+            }
+            finally
+            {
+                if (content != null) Marshal.ReleaseComObject(content);
             }
         }
 
@@ -68,11 +122,18 @@ namespace GOWordAgentAddIn
             if (!IsDocumentValid()) return false;
 
             Word.Range searchRange = null;
+            Word.Find find = null;
+            Word.Comment comment = null;
+
             try
             {
                 searchRange = _document.Content;
-                if (searchRange.Find.Execute(FindText: original, MatchCase: false, MatchWholeWord: false,
-                                              MatchWildcards: false, Forward: true, Wrap: Word.WdFindWrap.wdFindStop))
+                find = searchRange.Find;
+
+                bool found = find.Execute(FindText: original, MatchCase: false, MatchWholeWord: false,
+                                          MatchWildcards: false, Forward: true, Wrap: Word.WdFindWrap.wdFindStop);
+
+                if (found)
                 {
                     start = searchRange.Start;
                     end = searchRange.End;
@@ -82,7 +143,7 @@ namespace GOWordAgentAddIn
                     {
                         _document.TrackRevisions = true;
                         searchRange.Text = modified;
-                        _document.Comments.Add(searchRange, commentText);
+                        comment = _document.Comments.Add(searchRange, commentText);
                         end = searchRange.End;
                         return true;
                     }
@@ -94,8 +155,9 @@ namespace GOWordAgentAddIn
             }
             finally
             {
-                if (searchRange != null)
-                    Marshal.ReleaseComObject(searchRange);
+                if (comment != null) Marshal.ReleaseComObject(comment);
+                if (find != null) Marshal.ReleaseComObject(find);
+                if (searchRange != null) Marshal.ReleaseComObject(searchRange);
             }
 
             return false;
@@ -146,11 +208,13 @@ namespace GOWordAgentAddIn
             if (start < 0 || end <= start) return false;
 
             Word.Range range = null;
+            Word.Window activeWindow = null;
             try
             {
                 range = _document.Range(start, end);
                 range.Select();
-                _application.ActiveWindow.ScrollIntoView(range);
+                activeWindow = _application.ActiveWindow;
+                activeWindow.ScrollIntoView(range);
                 return true;
             }
             catch (Exception ex)
@@ -160,8 +224,8 @@ namespace GOWordAgentAddIn
             }
             finally
             {
-                if (range != null)
-                    Marshal.ReleaseComObject(range);
+                if (activeWindow != null) Marshal.ReleaseComObject(activeWindow);
+                if (range != null) Marshal.ReleaseComObject(range);
             }
         }
 
@@ -174,14 +238,19 @@ namespace GOWordAgentAddIn
             if (string.IsNullOrWhiteSpace(originalText)) return false;
 
             Word.Range searchRange = null;
+            Word.Find find = null;
+            Word.Window activeWindow = null;
             try
             {
                 searchRange = _document.Content;
-                if (searchRange.Find.Execute(FindText: originalText, MatchCase: false, MatchWholeWord: false,
-                                              MatchWildcards: false, Forward: true, Wrap: Word.WdFindWrap.wdFindStop))
+                find = searchRange.Find;
+                
+                if (find.Execute(FindText: originalText, MatchCase: false, MatchWholeWord: false,
+                                  MatchWildcards: false, Forward: true, Wrap: Word.WdFindWrap.wdFindStop))
                 {
                     searchRange.Select();
-                    _application.ActiveWindow.ScrollIntoView(searchRange);
+                    activeWindow = _application.ActiveWindow;
+                    activeWindow.ScrollIntoView(searchRange);
                     return true;
                 }
             }
@@ -191,8 +260,9 @@ namespace GOWordAgentAddIn
             }
             finally
             {
-                if (searchRange != null)
-                    Marshal.ReleaseComObject(searchRange);
+                if (activeWindow != null) Marshal.ReleaseComObject(activeWindow);
+                if (find != null) Marshal.ReleaseComObject(find);
+                if (searchRange != null) Marshal.ReleaseComObject(searchRange);
             }
 
             return false;
@@ -203,12 +273,20 @@ namespace GOWordAgentAddIn
         /// </summary>
         public void NavigateToIssue(ProofreadIssueItem item)
         {
+            if (item == null) throw new ArgumentNullException(nameof(item));
             if (_application == null) throw new InvalidOperationException("Application 为空");
             if (_document == null) throw new InvalidOperationException("Document 为空");
             if (!IsDocumentValid()) throw new InvalidOperationException("文档已被释放");
 
             // 激活 Word 窗口
-            try { _application.Activate(); } catch { }
+            try 
+            { 
+                _application.Activate(); 
+            } 
+            catch (COMException ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[NavigateToIssue] 激活窗口失败: {ex.Message}");
+            }
 
             // 优先使用位置定位
             if (NavigateToRange(item.DocumentStart, item.DocumentEnd))
@@ -218,6 +296,26 @@ namespace GOWordAgentAddIn
             if (!NavigateBySearch(item.Original))
                 throw new InvalidOperationException("无法在文档中找到该位置，可能文本已被修改。");
         }
+
+        #region IDisposable
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                // 注意：_application 和 _document 是外部传入的引用，
+                // 不应该在这里释放，否则会影响 Word 的正常运行
+                _disposed = true;
+            }
+        }
+
+        #endregion
     }
 
     /// <summary>
@@ -233,6 +331,8 @@ namespace GOWordAgentAddIn
             service = null;
             errorMessage = null;
 
+            Word.Document doc = null;
+
             try
             {
                 var app = Globals.ThisAddIn?.Application;
@@ -242,7 +342,7 @@ namespace GOWordAgentAddIn
                     return false;
                 }
 
-                var doc = app.ActiveDocument;
+                doc = app.ActiveDocument;
                 if (doc == null)
                 {
                     errorMessage = "当前未打开任何文档";
@@ -256,6 +356,7 @@ namespace GOWordAgentAddIn
                 }
                 catch (COMException)
                 {
+                    Marshal.ReleaseComObject(doc);
                     errorMessage = "文档已被释放，请重新打开";
                     return false;
                 }
@@ -265,6 +366,7 @@ namespace GOWordAgentAddIn
             }
             catch (Exception ex)
             {
+                if (doc != null) Marshal.ReleaseComObject(doc);
                 errorMessage = ex.Message;
                 return false;
             }

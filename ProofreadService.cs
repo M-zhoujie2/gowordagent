@@ -228,7 +228,7 @@ namespace GOWordAgentAddIn
                     completedCount++;
                     
                     if (result.IsCached)
-                        _cacheHitCount++;
+                        System.Threading.Interlocked.Increment(ref _cacheHitCount);
                 }
                 
                 // 计算预计剩余时间
@@ -426,11 +426,8 @@ namespace GOWordAgentAddIn
             if (string.IsNullOrWhiteSpace(aiResponse))
                 return items;
             
-            // 匹配格式：【第X处】类型：...｜严重度：...
-            var regex = new Regex(@"【第\d+处】类型：(?<type>[^\r\n|]+)(?:[｜|]严重度：(?<severity>[^\r\n]+))?\r?\n原文：(?<original>.*?)\r?\n修改：(?<modified>.*?)\r?\n理由：(?<reason>.*?)(?=\r?\n【第|$)", 
-                RegexOptions.Singleline | RegexOptions.IgnoreCase);
-            
-            foreach (Match match in regex.Matches(aiResponse))
+            // 使用预编译的正则表达式（静态字段，性能更好）
+            foreach (Match match in ProofreadItemRegex.Matches(aiResponse))
             {
                 items.Add(new ProofreadItem
                 {
@@ -451,7 +448,9 @@ namespace GOWordAgentAddIn
         private void ReportProgress(int total, int completed, int current, string status, 
             ParagraphResult result, bool isCompleted, int estimatedRemaining = -1)
         {
-            _onProgress?.Invoke(this, new ProofreadProgressArgs
+            // 创建本地副本避免竞态条件
+            var handler = _onProgress;
+            handler?.Invoke(this, new ProofreadProgressArgs
             {
                 TotalParagraphs = total,
                 CompletedParagraphs = completed,
@@ -594,18 +593,40 @@ namespace GOWordAgentAddIn
 
         #region IDisposable
 
-        private bool _disposed = false;
+        private volatile bool _disposed = false;
 
         /// <summary>
         /// 释放资源
         /// </summary>
         public void Dispose()
         {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// 释放资源的实际实现
+        /// </summary>
+        protected virtual void Dispose(bool disposing)
+        {
             if (!_disposed)
             {
-                _semaphore?.Dispose();
+                if (disposing)
+                {
+                    // 释放托管资源
+                    _semaphore?.Dispose();
+                }
+                
                 _disposed = true;
             }
+        }
+
+        /// <summary>
+        /// 终结器
+        /// </summary>
+        ~ProofreadService()
+        {
+            Dispose(false);
         }
 
         #endregion

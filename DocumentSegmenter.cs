@@ -21,7 +21,12 @@ namespace GOWordAgentAddIn
         public int TargetChunkSize 
         { 
             get => _targetChunkSize;
-            set => _targetChunkSize = Math.Max(100, value); // 最小100字符
+            set 
+            { 
+                _targetChunkSize = Math.Max(100, value); // 最小100字符
+                // 当目标大小改变时，自动调整重叠大小以确保不超过一半
+                _overlapSize = Math.Min(_overlapSize, _targetChunkSize / 2);
+            }
         }
 
         /// <summary>
@@ -30,7 +35,7 @@ namespace GOWordAgentAddIn
         public int OverlapSize 
         { 
             get => _overlapSize;
-            set => _overlapSize = Math.Max(0, Math.Min(value, TargetChunkSize / 2)); // 不超过目标大小的一半
+            set => _overlapSize = Math.Max(0, Math.Min(value, _targetChunkSize / 2)); // 不超过目标大小的一半
         }
 
         /// <summary>

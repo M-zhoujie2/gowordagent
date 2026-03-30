@@ -32,8 +32,11 @@ namespace GOWordAgentAddIn
             // 宽度变更时实时保存（使用 _paneHost 的 SizeChanged 事件）
             _paneHost.SizeChanged += (s, args) =>
             {
-                _cachedPaneWidth = GOWordAgentPane.Width;
-                SavePaneWidthSafe(_cachedPaneWidth);
+                if (GOWordAgentPane != null)
+                {
+                    _cachedPaneWidth = GOWordAgentPane.Width;
+                    SavePaneWidthSafe(_cachedPaneWidth);
+                }
             };
         }
 
@@ -41,6 +44,12 @@ namespace GOWordAgentAddIn
         {
             // Shutdown 时不再访问 CustomTaskPane，使用缓存值
             SavePaneWidthSafe(_cachedPaneWidth);
+            
+            // 释放 PaneHost
+            if (_paneHost is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
         }
 
         #region VSTO 生成的代码

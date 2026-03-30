@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -21,12 +20,26 @@ namespace GOWordAgentAddIn
         private List<object> _messageHistory = new List<object>();
         private AIProvider _currentProvider = AIProvider.DeepSeek;
 
-        private readonly SolidColorBrush _primaryColor = new SolidColorBrush(Color.FromRgb(0, 120, 212));
-        private readonly SolidColorBrush _primaryLightColor = new SolidColorBrush(Color.FromRgb(232, 242, 252));
-        private readonly SolidColorBrush _userBubbleColor = new SolidColorBrush(Color.FromRgb(227, 242, 253));
-        private readonly SolidColorBrush _aiBubbleColor = new SolidColorBrush(Color.FromRgb(245, 245, 245));
-        private readonly SolidColorBrush _textPrimaryColor = new SolidColorBrush(Color.FromRgb(34, 34, 34));
-        private readonly SolidColorBrush _textSecondaryColor = new SolidColorBrush(Color.FromRgb(153, 153, 153));
+        private static readonly SolidColorBrush _primaryColor = CreateFrozenBrush(0, 120, 212);
+        private static readonly SolidColorBrush _primaryLightColor = CreateFrozenBrush(232, 242, 252);
+        private static readonly SolidColorBrush _userBubbleColor = CreateFrozenBrush(227, 242, 253);
+        private static readonly SolidColorBrush _aiBubbleColor = CreateFrozenBrush(245, 245, 245);
+        private static readonly SolidColorBrush _textPrimaryColor = CreateFrozenBrush(34, 34, 34);
+        private static readonly SolidColorBrush _textSecondaryColor = CreateFrozenBrush(153, 153, 153);
+        
+        // 预编译的正则表达式（提高性能）
+        private static readonly Regex _categoryRegex = new Regex(@"【第\d+处】类型：([^\r\n:]+)", RegexOptions.Compiled);
+        private static readonly Regex _proofreadItemRegex = new Regex(@"【第(?<index>\d+)处】类型：(?<type>[^\r\n|]+)(?:[｜|]严重度：(?<severity>[^\r\n]+))?\r?\n原文：(?<original>.*?)\r?\n修改：(?<modified>.*?)\r?\n理由：(?<reason>.*?)(?=\r?\n【第|$)", RegexOptions.Singleline | RegexOptions.Compiled);
+        
+        /// <summary>
+        /// 创建冻结的 SolidColorBrush（提高性能，允许跨线程使用）
+        /// </summary>
+        private static SolidColorBrush CreateFrozenBrush(byte r, byte g, byte b)
+        {
+            var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+            brush.Freeze();
+            return brush;
+        }
 
         public GOWordAgentPaneWpf()
         {
@@ -56,6 +69,8 @@ namespace GOWordAgentAddIn
         }
 
         /// <summary>
+        /// 自动连接并显示消息
+        /// </summary>
         private async Task AutoConnectAsyncWithMessage()
         {
             try
@@ -388,7 +403,7 @@ namespace GOWordAgentAddIn
             
             // 清空内存缓存
             ProofreadService.ClearCache();
-            _proofreadResults.Clear();
+            lock (_proofreadResultsLock) { _proofreadResults.Clear(); }
             
             // 重置顶部状态
             UpdateHeaderStatus("就绪", Brushes.Green);
@@ -556,8 +571,9 @@ namespace GOWordAgentAddIn
 
         // 校对服务实例
         private ProofreadService _proofreadService;
-        private CancellationTokenSource _proofreadCts;
+        private volatile CancellationTokenSource _proofreadCts;
         private readonly List<ParagraphResult> _proofreadResults = new List<ParagraphResult>();
+        private readonly object _proofreadResultsLock = new object();
 
         public void StartProofread()
         {
@@ -595,8 +611,12 @@ namespace GOWordAgentAddIn
             string docText = GetDocumentText();
             if (string.IsNullOrWhiteSpace(docText)) return;
 
-            // 取消之前的校对任务
-            _proofreadCts?.Cancel();
+            // 取消并释放之前的校对任务
+            if (_proofreadCts != null)
+            {
+                _proofreadCts.Cancel();
+                _proofreadCts.Dispose();
+            }
             _proofreadCts = new CancellationTokenSource();
 
             // 从配置读取提示词
@@ -606,7 +626,7 @@ namespace GOWordAgentAddIn
             _proofreadService = new ProofreadService(_llmService, systemPrompt, concurrency: 5);
             _proofreadService.OnProgress += OnProofreadProgress;
 
-            _proofreadResults.Clear();
+            lock (_proofreadResultsLock) { _proofreadResults.Clear(); }
             
             UpdateHeaderStatus("正在校对...", Brushes.Orange);
             BtnProofread.IsEnabled = false;
@@ -616,7 +636,7 @@ namespace GOWordAgentAddIn
                 var stopwatch = Stopwatch.StartNew();
                 var results = await _proofreadService.ProofreadDocumentAsync(docText, _proofreadCts.Token);
                 stopwatch.Stop();
-                _proofreadResults.AddRange(results);
+                lock (_proofreadResultsLock) { _proofreadResults.AddRange(results); }
                 
                 // 生成详细报告
                 var report = GenerateProofreadReport(results, docText.Length, stopwatch.Elapsed);
@@ -666,9 +686,23 @@ namespace GOWordAgentAddIn
         }
 
         /// <summary>
-        /// 更新顶部标题栏状态
+        /// 更新顶部标题栏状态（线程安全）
         /// </summary>
         private void UpdateHeaderStatus(string text, Brush color)
+        {
+            if (Dispatcher.CheckAccess())
+            {
+                // 在UI线程，直接更新
+                UpdateHeaderStatusInternal(text, color);
+            }
+            else
+            {
+                // 不在UI线程，使用Dispatcher
+                Dispatcher.Invoke(() => UpdateHeaderStatusInternal(text, color));
+            }
+        }
+        
+        private void UpdateHeaderStatusInternal(string text, Brush color)
         {
             try
             {
@@ -874,8 +908,7 @@ namespace GOWordAgentAddIn
             if (string.IsNullOrWhiteSpace(text)) return categories;
 
             // 匹配：【第X处】类型：xxx
-            var regex = new Regex(@"【第\d+处】类型：([^\r\n:]+)");
-            foreach (Match match in regex.Matches(text))
+            foreach (Match match in _categoryRegex.Matches(text))
             {
                 string cat = match.Groups[1].Value.Trim().TrimEnd('：', ':');
                 
@@ -927,10 +960,8 @@ namespace GOWordAgentAddIn
         {
             var items = new List<ProofreadIssueItem>();
             // 匹配完整的问题格式
-            var regex = new Regex(@"【第(?<index>\d+)处】类型：(?<type>[^\r\n|]+)(?:[｜|]严重度：(?<severity>[^\r\n]+))?\r?\n原文：(?<original>.*?)\r?\n修改：(?<modified>.*?)\r?\n理由：(?<reason>.*?)(?=\r?\n【第|$)", RegexOptions.Singleline);
-            
             int idx = 1;
-            foreach (Match match in regex.Matches(aiResponse))
+            foreach (Match match in _proofreadItemRegex.Matches(aiResponse))
             {
                 string original = match.Groups["original"].Value.Trim();
                 if (!string.IsNullOrWhiteSpace(original))

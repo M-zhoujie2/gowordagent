@@ -162,7 +162,7 @@ namespace GOWordAgentAddIn
             {
                 _globalCache.Clear();
                 _accessCount.Clear();
-                _accessCounter = 0;
+                System.Threading.Interlocked.Exchange(ref _accessCounter, 0);
                 Debug.WriteLine("[ProofreadCacheManager] 缓存已清除");
             }
         }

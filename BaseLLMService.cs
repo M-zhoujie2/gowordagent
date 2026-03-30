@@ -14,7 +14,7 @@ namespace GOWordAgentAddIn
     /// <summary>
     /// LLM 服务抽象基类
     /// </summary>
-    public abstract class BaseLLMService : ILLMService
+    public abstract class BaseLLMService : ILLMService, IDisposable
     {
         protected readonly string _apiUrl;
         protected readonly string _apiKey;
@@ -233,7 +233,10 @@ namespace GOWordAgentAddIn
                     Directory.CreateDirectory(directory);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[BaseLLMService] 创建日志目录失败: {ex.Message}");
+            }
         }
 
         private void WriteLog(RequestLogInfo logInfo)
@@ -296,6 +299,45 @@ namespace GOWordAgentAddIn
             {
                 return $"读取日志失败: {ex.Message}";
             }
+        }
+
+        #endregion
+
+        #region IDisposable
+
+        private bool _disposed = false;
+
+        /// <summary>
+        /// 释放资源
+        /// </summary>
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// 释放资源的实际实现
+        /// </summary>
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                if (disposing)
+                {
+                    // 释放托管资源
+                    _httpClient?.Dispose();
+                }
+                _disposed = true;
+            }
+        }
+
+        /// <summary>
+        /// 终结器
+        /// </summary>
+        ~BaseLLMService()
+        {
+            Dispose(false);
         }
 
         #endregion
