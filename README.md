@@ -29,19 +29,24 @@
 
 ### 核心组件
 
-| 文件 | 行数 | 说明 |
-|------|------|------|
-| `GOWordAgentPaneWpf.xaml.cs` | 687 | UI 主控类，处理交互和 Word 操作 |
-| `ProofreadService.cs` | 452 | 校对服务（包含并发、缓存、报告功能） |
-| `ConfigManager.cs` | 271 | 配置管理，DPAPI 加密存储 |
-| `WordDocumentHelper.cs` | 147 | Word COM 操作封装 |
-| `BaseLLMService.cs` | 148 | LLM 服务基类 |
+| 文件/目录 | 说明 |
+|-----------|------|
+| `GOWordAgentPaneWpf.xaml.cs` | UI 主控类，处理交互和 Word 操作 |
+| `ProofreadService.cs` | 校对服务（并发、缓存、报告） |
+| `WordDocumentService.cs` | Word COM 操作封装 |
+| `WordProofreadController.cs` | 校对结果与 Word 文档交互控制 |
+| `ConfigManager.cs` | 配置管理，DPAPI 加密存储 |
+| `BaseLLMService.cs` | LLM 服务抽象基类 |
+| `Models/` | 数据模型（ParagraphResult, ProofreadIssueItem 等） |
+| `ViewModels/` | MVVM 视图模型（数据绑定） |
 
 ### 关键技术
 - **并发处理**：支持 3-5 段并行校对（Semaphore 控制）
-- **缓存机制**：内存级缓存，基于 SHA256 内容哈希
-- **分段处理**：1500 字/段，100 字重叠防止边界错误
+- **缓存机制**：内存级缓存（LRU 淘汰），基于 SHA256 内容哈希
+- **分段处理**：智能分段，支持重叠防止边界错误
 - **配置加密**：使用 DPAPI 加密 API Key 和配置
+- **MVVM 架构**：数据驱动 UI，支持 DataTemplate 绑定
+- **COM 安全**：完善的 Marshal.ReleaseComObject 管理
 
 ## 使用说明
 
@@ -82,21 +87,14 @@
 3. 大文档（>3000字）会自动分段处理
 4. 缓存仅在当前 Word 会话有效，关闭后清空
 
-## 项目文档
-
-详见 [docs](./docs) 目录：
+## 文档
 
 | 文档 | 说明 |
 |------|------|
-| [缺陷修复报告](./docs/BUGFIX_REPORT.md) | 已知问题及修复记录 |
-| [代码审查修复](./docs/CODE_REVIEW_FIXES.md) | 代码审查发现的问题及修复 |
-| [最终修复记录](./docs/FINAL_FIXES.md) | 最终版本修复详情 |
-| [优化完成总结](./docs/OPTIMIZATION_COMPLETE.md) | 优化工作总结 |
-| [最终优化方案](./docs/OPTIMIZATION_FINAL.md) | 最终阶段优化详情 |
-| [优化计划](./docs/OPTIMIZATION_PLAN.md) | 项目优化计划 |
-| [优化状态报告](./docs/OPTIMIZATION_STATUS.md) | 优化进度跟踪 |
-| [安全审计报告](./docs/SECURITY_AUDIT_REPORT.md) | 安全扫描及审计结果 |
-| [技术架构概述](./docs/TECHNICAL_OVERVIEW.md) | 系统架构及技术实现 |
+| [架构说明](./docs/ARCHITECTURE.md) | 项目架构、数据流、技术细节 |
+| [API 文档](./docs/API.md) | 服务接口、数据模型说明 |
+| [使用指南](./docs/USAGE.md) | 安装配置、故障排除 |
+| [更新日志](./docs/CHANGELOG.md) | 版本变更记录 |
 
 ## 相关链接
 

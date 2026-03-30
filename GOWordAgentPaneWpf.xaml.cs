@@ -396,9 +396,14 @@ namespace GOWordAgentAddIn
                 _messageHistory.Add(new ChatMessage(ChatRole.AI, response));
                 UpdateStatus("就绪", Brushes.Green);
             }
+            catch (LLMServiceException ex)
+            {
+                // 显示友好的错误信息
+                AddMessageBubble("错误", ex.GetFriendlyErrorMessage(), false, true);
+            }
             catch (Exception ex)
             {
-                AddMessageBubble("错误", ex.Message, false, true);
+                AddMessageBubble("错误", $"请求失败: {ex.Message}", false, true);
             }
             finally
             {

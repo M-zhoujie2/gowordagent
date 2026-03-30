@@ -81,13 +81,13 @@ namespace GOWordAgentAddIn
             {
                 throw;
             }
-            catch (TaskCanceledException)
+            catch (TaskCanceledException ex)
             {
-                return "请求超时，请确认 Ollama 是否已启动";
+                throw new LLMServiceException("请求超时，请确认 Ollama 是否已启动", ex, ProviderName);
             }
-            catch (HttpRequestException)
+            catch (HttpRequestException ex)
             {
-                return "连接失败，请确认 Ollama 服务是否运行在 " + _apiUrl;
+                throw new LLMServiceException($"连接失败，请确认 Ollama 服务是否运行在 {_apiUrl}", ex, ProviderName);
             }
         }
 
@@ -104,13 +104,13 @@ namespace GOWordAgentAddIn
             {
                 throw;
             }
-            catch (TaskCanceledException)
+            catch (TaskCanceledException ex)
             {
-                return "请求超时，请确认 Ollama 是否已启动";
+                throw new LLMServiceException("请求超时，请确认 Ollama 是否已启动", ex, ProviderName);
             }
-            catch (HttpRequestException)
+            catch (HttpRequestException ex)
             {
-                return "连接失败，请确认 Ollama 服务是否运行在 " + _apiUrl;
+                throw new LLMServiceException($"连接失败，请确认 Ollama 服务是否运行在 {_apiUrl}", ex, ProviderName);
             }
         }
     }

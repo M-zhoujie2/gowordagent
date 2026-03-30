@@ -256,7 +256,29 @@ namespace GOWordAgentAddIn
 
                 // 调用LLM
                 Debug.WriteLine($"[ProofreadService] 段落 {index + 1} 调用LLM...");
-                var response = await _llmService.SendProofreadMessageAsync(_systemPrompt, paragraph);
+                string response;
+                try
+                {
+                    response = await _llmService.SendProofreadMessageAsync(_systemPrompt, paragraph);
+                }
+                catch (LLMServiceException ex)
+                {
+                    // API 调用失败，记录错误但继续处理其他段落
+                    Debug.WriteLine($"[ProofreadService] 段落 {index + 1} LLM调用失败: {ex.GetFriendlyErrorMessage()}");
+                    
+                    return new ParagraphResult
+                    {
+                        Index = index,
+                        OriginalText = paragraph,
+                        ResultText = $"[错误] {ex.GetFriendlyErrorMessage()}",
+                        IsCompleted = true,
+                        IsCached = false,
+                        ProcessTime = DateTime.Now,
+                        ElapsedMs = stopwatch.ElapsedMilliseconds,
+                        Items = new System.Collections.Generic.List<ProofreadIssueItem>()
+                    };
+                }
+                
                 Debug.WriteLine($"[ProofreadService] 段落 {index + 1} LLM返回, 结果长度={response?.Length ?? 0}");
                 
                 // 解析结果
@@ -336,22 +358,22 @@ namespace GOWordAgentAddIn
             var sb = new StringBuilder();
             var now = DateTime.Now;
             
-            sb.AppendLine("# 校对报告");
+            sb.AppendLine("【校对报告】");
             sb.AppendLine();
-            sb.AppendLine("## 基本信息");
+            sb.AppendLine("基本信息：");
             
             if (totalChars > 0)
-                sb.AppendLine($"- **字数**：{totalChars:N0}");
+                sb.AppendLine($"  字数：{totalChars:N0}");
             
-            sb.AppendLine($"- **分块**：{results.Count} 块");
+            sb.AppendLine($"  分块：{results.Count} 块");
             
             if (!string.IsNullOrEmpty(providerName))
-                sb.AppendLine($"- **校对模型**：{providerName}");
+                sb.AppendLine($"  校对模型：{providerName}");
             
-            sb.AppendLine($"- **生成时间**：{now:yyyy-MM-dd HH:mm:ss}");
+            sb.AppendLine($"  生成时间：{now:yyyy-MM-dd HH:mm:ss}");
             
             if (elapsed.HasValue)
-                sb.AppendLine($"- **耗时**：{elapsed.Value.TotalSeconds:F1} 秒");
+                sb.AppendLine($"  耗时：{elapsed.Value.TotalSeconds:F1} 秒");
             
             sb.AppendLine();
 
@@ -379,20 +401,18 @@ namespace GOWordAgentAddIn
                     cachedCount++;
             }
 
-            sb.AppendLine("## 统计汇总");
-            sb.AppendLine();
-            sb.AppendLine($"### 发现问题（共 {totalIssues} 处）");
+            sb.AppendLine($"统计汇总（共发现 {totalIssues} 处问题）：");
             
             if (allCategories.Count > 0)
             {
                 foreach (var kv in allCategories.OrderByDescending(x => x.Value))
                 {
-                    sb.AppendLine($"- {kv.Key}：{kv.Value} 处");
+                    sb.AppendLine($"  • {kv.Key}：{kv.Value} 处");
                 }
             }
             else
             {
-                sb.AppendLine("- 未发现明显错误");
+                sb.AppendLine("  • 未发现明显错误");
             }
             
             if (cachedCount > 0)

@@ -204,7 +204,9 @@
   -->
   <ItemGroup>
     <Compile Include="ILLMService.cs" />
+    <Compile Include="LLMServiceException.cs" />
     <Compile Include="LLMServiceFactory.cs" />
+    <Compile Include="HttpClientFactory.cs" />
     <Compile Include="LLMRequestLogger.cs" />
     <Compile Include="ConfigManager.cs" />
     <Compile Include="BaseLLMService.cs" />

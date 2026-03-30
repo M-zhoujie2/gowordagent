@@ -29,27 +29,8 @@ namespace GOWordAgentAddIn
             _apiUrl = string.IsNullOrWhiteSpace(apiUrl) ? defaultApiUrl : apiUrl;
             _model = string.IsNullOrWhiteSpace(model) ? defaultModel : model;
 
-            var handler = new HttpClientHandler
-            {
-                SslProtocols = System.Security.Authentication.SslProtocols.Tls12 |
-                               System.Security.Authentication.SslProtocols.Tls13,
-                UseProxy = false,
-                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
-                MaxConnectionsPerServer = 10
-            };
-
-            _httpClient = new HttpClient(handler)
-            {
-                Timeout = TimeSpan.FromSeconds(120)
-            };
-            
-            _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
-            _httpClient.DefaultRequestHeaders.Add("Accept-Encoding", "gzip, deflate");
-            
-            if (!string.IsNullOrEmpty(apiKey))
-            {
-                _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-            }
+            // 使用 HttpClientFactory 创建客户端，共享连接池
+            _httpClient = HttpClientFactory.CreateAuthenticatedClient(apiKey, _apiUrl);
 
             _logger = new LLMRequestLogger();
         }
@@ -64,6 +45,11 @@ namespace GOWordAgentAddIn
         {
             return await SendRequestAsync(messages, cancellationToken);
         }
+
+        /// <summary>
+        /// 校对请求超时时间（秒）- 校对场景可能需要更长时间
+        /// </summary>
+        protected virtual int ProofreadTimeoutSeconds => 300; // 默认5分钟
 
         public virtual async Task<string> SendProofreadMessageAsync(string systemContent, string userContent, CancellationToken cancellationToken = default)
         {
@@ -83,9 +69,14 @@ namespace GOWordAgentAddIn
             };
 
             string jsonContent = BuildProofreadRequestBody(messages);
-            string response = await PostAsync(jsonContent, requestInfo, cancellationToken);
             
-            return response;
+            // 校对请求使用更长的超时时间
+            using (var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                cts.CancelAfter(TimeSpan.FromSeconds(ProofreadTimeoutSeconds));
+                string response = await PostAsync(jsonContent, requestInfo, cts.Token);
+                return response;
+            }
         }
 
         protected virtual async Task<string> SendRequestAsync(List<object> messages, CancellationToken cancellationToken = default)
@@ -99,30 +90,46 @@ namespace GOWordAgentAddIn
             return jsonResponse["choices"]?[0]?["message"]?.Value<string>("content") ?? "未获取到回复内容";
         }
 
+        /// <summary>
+        /// 构建请求体 - 返回 Dictionary 以便子类灵活扩展
+        /// </summary>
+        protected virtual Dictionary<string, object> BuildRequestBodyDict(List<object> messages)
+        {
+            return new Dictionary<string, object>
+            {
+                ["model"] = _model,
+                ["messages"] = messages,
+                ["temperature"] = 0.7,
+                ["max_tokens"] = 2000,
+                ["stream"] = false
+            };
+        }
+
+        /// <summary>
+        /// 构建校对请求体 - 返回 Dictionary 以便子类灵活扩展
+        /// </summary>
+        protected virtual Dictionary<string, object> BuildProofreadRequestBodyDict(List<object> messages)
+        {
+            return new Dictionary<string, object>
+            {
+                ["model"] = _model,
+                ["messages"] = messages,
+                ["temperature"] = 0.1,
+                ["max_tokens"] = 4000,
+                ["stream"] = false
+            };
+        }
+
         protected virtual string BuildRequestBody(List<object> messages)
         {
-            var requestBody = new
-            {
-                model = _model,
-                messages = messages,
-                temperature = 0.7,
-                max_tokens = 2000,
-                stream = false
-            };
-            return JsonConvert.SerializeObject(requestBody);
+            var dict = BuildRequestBodyDict(messages);
+            return JsonConvert.SerializeObject(dict);
         }
 
         protected virtual string BuildProofreadRequestBody(List<object> messages)
         {
-            var requestBody = new
-            {
-                model = _model,
-                messages = messages,
-                temperature = 0.1,
-                max_tokens = 4000,
-                stream = false
-            };
-            return JsonConvert.SerializeObject(requestBody);
+            var dict = BuildProofreadRequestBodyDict(messages);
+            return JsonConvert.SerializeObject(dict);
         }
 
         protected virtual async Task<string> PostAsync(string jsonContent, RequestLogInfo logInfo, CancellationToken cancellationToken = default)
@@ -177,7 +184,11 @@ namespace GOWordAgentAddIn
                         _logger.WriteLog(logInfo);
                     }
 
-                    return $"API 调用失败: {response.StatusCode}\n{responseBody}";
+                    throw new LLMServiceException(
+                        $"API 调用失败: {response.StatusCode}",
+                        response.StatusCode,
+                        responseBody,
+                        ProviderName);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -197,7 +208,7 @@ namespace GOWordAgentAddIn
                 // 重新抛出，让上层处理取消
                 throw;
             }
-            catch (TaskCanceledException)
+            catch (TaskCanceledException ex)
             {
                 stopwatch.Stop();
                 string errorMsg = "请求超时，请检查网络连接或稍后重试";
@@ -211,7 +222,7 @@ namespace GOWordAgentAddIn
                     _logger.WriteLog(logInfo);
                 }
                 
-                return errorMsg;
+                throw new LLMServiceException(errorMsg, ex, ProviderName);
             }
             catch (Exception ex)
             {
@@ -227,7 +238,7 @@ namespace GOWordAgentAddIn
                     _logger.WriteLog(logInfo);
                 }
                 
-                return errorMsg;
+                throw new LLMServiceException(errorMsg, ex, ProviderName);
             }
         }
 
@@ -267,8 +278,8 @@ namespace GOWordAgentAddIn
             {
                 if (disposing)
                 {
-                    // 释放托管资源
-                    _httpClient?.Dispose();
+                    // 注意：_httpClient 由 HttpClientFactory 管理，共享连接池
+                    // 不应该在这里释放，避免影响其他实例
                 }
                 _disposed = true;
             }

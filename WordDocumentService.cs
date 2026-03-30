@@ -25,6 +25,8 @@ namespace GOWordAgentAddIn
 
         /// <summary>
         /// 获取当前活动文档的内容或选中的文本
+        /// 注意：此方法提取纯文本内容，表格中的文本会按文档流顺序提取，
+        /// 图片、页眉页脚等内容会被忽略。如需更精细的控制，请使用 GetDocumentTextEx 方法。
         /// </summary>
         public static string GetDocumentText(Word.Application app)
         {
@@ -72,6 +74,8 @@ namespace GOWordAgentAddIn
                 }
                 else
                 {
+                    // 获取正文内容（不包括页眉页脚）
+                    // 表格中的文本会按单元格顺序提取
                     contentRange = doc.Content;
                     docText = contentRange?.Text ?? string.Empty;
                 }
@@ -88,6 +92,148 @@ namespace GOWordAgentAddIn
                 if (activeWindow != null) Marshal.ReleaseComObject(activeWindow);
                 if (contentRange != null) Marshal.ReleaseComObject(contentRange);
                 // 注意：doc 是通过 app.ActiveDocument 获取的引用，不是本方法创建的，不应该释放
+            }
+        }
+
+        /// <summary>
+        /// 获取文档文本（高级版本）
+        /// 遍历文档段落，更好地处理表格、列表等结构
+        /// </summary>
+        public static string GetDocumentTextEx(Word.Application app, bool includeTables = true, bool includeHeadersFooters = false)
+        {
+            if (app == null) throw new ArgumentNullException(nameof(app));
+
+            Word.Document doc = null;
+            Word.Paragraphs paragraphs = null;
+            Word.Range headerRange = null;
+            Word.Range footerRange = null;
+            var sb = new StringBuilder();
+
+            try
+            {
+                doc = app.ActiveDocument;
+                if (doc == null) throw new InvalidOperationException("当前未打开任何文档。");
+
+                // 获取正文段落
+                paragraphs = doc.Content.Paragraphs;
+                int count = paragraphs.Count;
+
+                for (int i = 1; i <= count; i++)
+                {
+                    Word.Paragraph para = null;
+                    Word.Range paraRange = null;
+                    
+                    try
+                    {
+                        para = paragraphs[i];
+                        paraRange = para.Range;
+                        
+                        string text = paraRange.Text?.Trim() ?? string.Empty;
+                        if (!string.IsNullOrEmpty(text))
+                        {
+                            // 检测是否在表格中
+                            bool inTable = false;
+                            try
+                            {
+                                inTable = (bool)paraRange.Information[Word.WdInformation.wdWithInTable];
+                            }
+                            catch { }
+
+                            if (inTable && !includeTables)
+                                continue; // 跳过表格内容
+
+                            if (sb.Length > 0)
+                                sb.AppendLine();
+                            
+                            sb.Append(text);
+                        }
+                    }
+                    finally
+                    {
+                        if (paraRange != null) Marshal.ReleaseComObject(paraRange);
+                        if (para != null) Marshal.ReleaseComObject(para);
+                    }
+                }
+
+                // 可选：添加页眉页脚内容
+                if (includeHeadersFooters)
+                {
+                    foreach (Word.Section section in doc.Sections)
+                    {
+                        Word.HeadersFooters headers = null;
+                        Word.HeadersFooters footers = null;
+                        
+                        try
+                        {
+                            headers = section.Headers;
+                            footers = section.Footers;
+
+                            // 处理页眉
+                            foreach (Word.HeaderFooter header in headers)
+                            {
+                                try
+                                {
+                                    headerRange = header.Range;
+                                    string headerText = headerRange.Text?.Trim() ?? string.Empty;
+                                    if (!string.IsNullOrEmpty(headerText))
+                                    {
+                                        sb.AppendLine();
+                                        sb.AppendLine($"[页眉] {headerText}");
+                                    }
+                                }
+                                finally
+                                {
+                                    if (headerRange != null) 
+                                    {
+                                        Marshal.ReleaseComObject(headerRange);
+                                        headerRange = null;
+                                    }
+                                }
+                            }
+
+                            // 处理页脚
+                            foreach (Word.HeaderFooter footer in footers)
+                            {
+                                try
+                                {
+                                    footerRange = footer.Range;
+                                    string footerText = footerRange.Text?.Trim() ?? string.Empty;
+                                    if (!string.IsNullOrEmpty(footerText))
+                                    {
+                                        sb.AppendLine();
+                                        sb.AppendLine($"[页脚] {footerText}");
+                                    }
+                                }
+                                finally
+                                {
+                                    if (footerRange != null) 
+                                    {
+                                        Marshal.ReleaseComObject(footerRange);
+                                        footerRange = null;
+                                    }
+                                }
+                            }
+                        }
+                        finally
+                        {
+                            if (headers != null) Marshal.ReleaseComObject(headers);
+                            if (footers != null) Marshal.ReleaseComObject(footers);
+                        }
+                    }
+                }
+
+                string result = sb.ToString().Trim();
+                if (string.IsNullOrWhiteSpace(result))
+                    throw new InvalidOperationException("文档正文为空。");
+
+                return result;
+            }
+            finally
+            {
+                if (paragraphs != null) Marshal.ReleaseComObject(paragraphs);
+                if (headerRange != null) Marshal.ReleaseComObject(headerRange);
+                if (footerRange != null) Marshal.ReleaseComObject(footerRange);
+                // 注意：doc 是引用，不应该释放
             }
         }
 

@@ -5,9 +5,17 @@ using Newtonsoft.Json;
 
 namespace GOWordAgentAddIn
 {
+    /// <summary>
+    /// 智谱 GLM 服务
+    /// </summary>
     public class GLMService : BaseLLMService
     {
         public override string ProviderName => "智谱 AI";
+
+        /// <summary>
+        /// GLM 校对需要更长的推理时间
+        /// </summary>
+        protected override int ProofreadTimeoutSeconds => 300; // 5分钟
 
         public GLMService(string apiKey, string apiUrl = null, string model = null)
             : base(apiKey, apiUrl, model,
@@ -16,18 +24,14 @@ namespace GOWordAgentAddIn
         {
         }
 
-        protected override string BuildProofreadRequestBody(List<object> messages)
+        /// <summary>
+        /// GLM 特有参数：禁用思考模式以获得更快响应
+        /// </summary>
+        protected override Dictionary<string, object> BuildProofreadRequestBodyDict(List<object> messages)
         {
-            var requestBody = new
-            {
-                model = _model,
-                enable_thinking = false,
-                messages = messages,
-                temperature = 0.1,
-                max_tokens = 4000,
-                stream = false
-            };
-            return JsonConvert.SerializeObject(requestBody);
+            var dict = base.BuildProofreadRequestBodyDict(messages);
+            dict["enable_thinking"] = false; // GLM 特有参数
+            return dict;
         }
     }
 }
