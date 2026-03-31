@@ -18,32 +18,78 @@ namespace GOWordAgentAddIn
 
         // 缓存当前面板宽度
         private int _cachedPaneWidth = DefaultPaneWidth;
+        
+        // 标记面板是否已初始化
+        private bool _isPaneInitialized = false;
+        private readonly object _initLock = new object();
 
         private void ThisAddIn_Startup(object sender, EventArgs e)
         {
-            // 配置 WPF DPI 感知 - 修复 MaterialDesign 在高分辨率屏幕的模糊问题
-            ConfigureDpiAwareness();
-            
             Current = this;
             
-            _paneHost = new GOWordAgentPaneHost();
-            GOWordAgentPane = CustomTaskPanes.Add(_paneHost, "智能校验");
-            GOWordAgentPane.Visible = true;
-            
-            // 加载保存的宽度
-            var savedWidth = LoadSavedPaneWidth() ?? DefaultPaneWidth;
-            GOWordAgentPane.Width = savedWidth;
-            _cachedPaneWidth = savedWidth;
-
-            // 宽度变更时实时保存（使用 _paneHost 的 SizeChanged 事件）
-            _paneHost.SizeChanged += (s, args) =>
+            // 极简启动：不立即初始化面板，只在用户第一次使用时才创建
+            // 这样可以最大程度避免拖慢 Word 启动速度
+            System.Diagnostics.Debug.WriteLine("[ThisAddIn] 插件已加载，面板将在首次使用时初始化");
+        }
+        
+        /// <summary>
+        /// 获取或初始化任务面板（按需延迟初始化）
+        /// </summary>
+        public Microsoft.Office.Tools.CustomTaskPane GetOrInitializePane()
+        {
+            if (!_isPaneInitialized)
             {
-                if (GOWordAgentPane != null)
+                lock (_initLock)
                 {
-                    _cachedPaneWidth = GOWordAgentPane.Width;
-                    SavePaneWidthSafe(_cachedPaneWidth);
+                    if (!_isPaneInitialized)
+                    {
+                        InitializeAddIn();
+                        _isPaneInitialized = true;
+                    }
                 }
-            };
+            }
+            return GOWordAgentPane;
+        }
+        
+        /// <summary>
+        /// 延迟初始化插件（避免阻塞 Word 启动）
+        /// </summary>
+        private void InitializeAddIn()
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine("[ThisAddIn] 开始初始化面板...");
+                
+                // 配置 WPF DPI 感知
+                ConfigureDpiAwareness();
+                
+                _paneHost = new GOWordAgentPaneHost();
+                GOWordAgentPane = CustomTaskPanes.Add(_paneHost, "智能校验");
+                
+                // 初始状态设为不可见，用户可以通过 Ribbon 按钮手动打开
+                GOWordAgentPane.Visible = false;
+                
+                // 加载保存的宽度
+                var savedWidth = LoadSavedPaneWidth() ?? DefaultPaneWidth;
+                GOWordAgentPane.Width = savedWidth;
+                _cachedPaneWidth = savedWidth;
+
+                // 宽度变更时实时保存
+                _paneHost.SizeChanged += (s, args) =>
+                {
+                    if (GOWordAgentPane != null)
+                    {
+                        _cachedPaneWidth = GOWordAgentPane.Width;
+                        SavePaneWidthSafe(_cachedPaneWidth);
+                    }
+                };
+                
+                System.Diagnostics.Debug.WriteLine("[ThisAddIn] 面板初始化完成");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[ThisAddIn] 初始化失败: {ex.Message}");
+            }
         }
 
         private void ThisAddIn_Shutdown(object sender, EventArgs e)

@@ -12,10 +12,15 @@ namespace GOWordAgentAddIn
         private void btnTogglePane_Click(object sender, RibbonControlEventArgs e)
         {
             var addIn = ThisAddIn.Current;
-            if (addIn == null || addIn.GOWordAgentPane == null)
+            if (addIn == null)
                 return;
 
-            addIn.GOWordAgentPane.Visible = !addIn.GOWordAgentPane.Visible;
+            // 使用按需初始化获取面板
+            var pane = addIn.GetOrInitializePane();
+            if (pane == null)
+                return;
+
+            pane.Visible = !pane.Visible;
         }
     }
 }
