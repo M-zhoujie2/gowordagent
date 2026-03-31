@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using GOWordAgentAddIn.Models;
@@ -375,7 +376,25 @@ namespace GOWordAgentAddIn
             {
                 System.Diagnostics.Debug.WriteLine($"[BtnSend_Click] 未捕获异常: {ex}");
                 AddMessageBubble("错误", "发送消息失败，请重试", false, true);
-                BtnSend.IsEnabled = true;
+                Dispatcher.Invoke(() => BtnSend.IsEnabled = true);
+            }
+        }
+
+        private async void TxtInput_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter)
+            {
+                e.Handled = true;
+                try
+                {
+                    await BtnSendClickInternal();
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[TxtInput_KeyDown] 未捕获异常: {ex}");
+                    AddMessageBubble("错误", "发送消息失败，请重试", false, true);
+                    Dispatcher.Invoke(() => BtnSend.IsEnabled = true);
+                }
             }
         }
         
@@ -395,10 +414,13 @@ namespace GOWordAgentAddIn
             }
 
             AddMessageBubble("用户", userMessage, true);
-            TxtInput.Text = "输入消息...";
-            TxtInput.Foreground = _textSecondaryColor;
-            BtnSend.IsEnabled = false;
-            UpdateStatus($"{_llmService.ProviderName} 正在思考...", _primaryColor);
+            Dispatcher.Invoke(() =>
+            {
+                TxtInput.Text = "输入消息...";
+                TxtInput.Foreground = _textSecondaryColor;
+                BtnSend.IsEnabled = false;
+                UpdateStatus($"{_llmService.ProviderName} 正在思考...", _primaryColor);
+            });
 
             _messageHistory.Add(new ChatMessage(ChatRole.User, userMessage));
 
@@ -409,7 +431,7 @@ namespace GOWordAgentAddIn
                 string response = await _llmService.SendMessagesWithHistoryAsync(messagesForLLM);
                 AddMessageBubble(_llmService.ProviderName, response, false);
                 _messageHistory.Add(new ChatMessage(ChatRole.AI, response));
-                UpdateStatus("就绪", Brushes.Green);
+                Dispatcher.Invoke(() => UpdateStatus("就绪", Brushes.Green));
             }
             catch (LLMServiceException ex)
             {
@@ -422,7 +444,7 @@ namespace GOWordAgentAddIn
             }
             finally
             {
-                BtnSend.IsEnabled = true;
+                Dispatcher.Invoke(() => BtnSend.IsEnabled = true);
             }
         }
 
@@ -468,8 +490,11 @@ namespace GOWordAgentAddIn
                     });
                 }
                 
-                ChatMessages.Add(vm);
-                ChatScrollViewer.ScrollToEnd();
+                Dispatcher.Invoke(() =>
+                {
+                    ChatMessages.Add(vm);
+                    ChatScrollViewer.ScrollToEnd();
+                });
             }
             catch (Exception ex)
             {
@@ -731,11 +756,12 @@ namespace GOWordAgentAddIn
             }
             _proofreadCts = new CancellationTokenSource();
 
-            // 从配置读取提示词
+            // 从配置读取提示词和校验模式
             var (_, systemPrompt) = ConfigManager.GetProofreadConfig();
+            string currentMode = ConfigManager.CurrentConfig.ProofreadMode ?? "精准校验";
 
-            // 创建校对服务（并发数5）
-            _proofreadService = new ProofreadService(_llmService, systemPrompt, concurrency: 5);
+            // 创建校对服务（并发数5，传入校验模式以确保缓存隔离）
+            _proofreadService = new ProofreadService(_llmService, systemPrompt, concurrency: 5, proofreadMode: currentMode);
             _proofreadService.OnProgress += OnProofreadProgress;
 
             lock (_proofreadResultsLock) { _proofreadResults.Clear(); }

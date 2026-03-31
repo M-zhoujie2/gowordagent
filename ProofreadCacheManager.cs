@@ -36,12 +36,12 @@ namespace GOWordAgentAddIn
         /// <summary>
         /// 尝试从缓存获取结果
         /// </summary>
-        public static bool TryGetCachedResult(string text, int index, out ParagraphResult result)
+        public static bool TryGetCachedResult(string text, int index, out ParagraphResult result, string mode = null)
         {
             result = null;
             if (string.IsNullOrEmpty(text)) return false;
 
-            var cacheKey = ComputeHash(text);
+            var cacheKey = ComputeHash(text, mode);
             ParagraphResult cached = null;
 
             lock (_cacheLock)
@@ -85,11 +85,11 @@ namespace GOWordAgentAddIn
         /// <summary>
         /// 存储结果到缓存（带大小限制）
         /// </summary>
-        public static void StoreResult(string text, ParagraphResult result)
+        public static void StoreResult(string text, ParagraphResult result, string mode = null)
         {
             if (string.IsNullOrEmpty(text) || result == null) return;
 
-            var cacheKey = ComputeHash(text);
+            var cacheKey = ComputeHash(text, mode);
 
             lock (_cacheLock)
             {
@@ -132,12 +132,16 @@ namespace GOWordAgentAddIn
         /// 计算文本哈希（用于缓存键）
         /// 使用静态 SHA256 实例 + 锁，避免高并发时 SHA256.Create() 的锁竞争
         /// </summary>
-        public static string ComputeHash(string text)
+        /// <param name="text">文本内容</param>
+        /// <param name="mode">校验模式（精准校验/全文校验），为 null 或空时仅使用文本内容</param>
+        public static string ComputeHash(string text, string mode = null)
         {
             if (string.IsNullOrEmpty(text))
                 return string.Empty;
 
-            var bytes = Encoding.UTF8.GetBytes(text);
+            // 将校验模式纳入哈希计算
+            var content = string.IsNullOrEmpty(mode) ? text : $"[{mode}]{text}";
+            var bytes = Encoding.UTF8.GetBytes(content);
             byte[] hash;
             
             lock (_shaLock)

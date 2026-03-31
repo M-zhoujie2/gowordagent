@@ -387,7 +387,8 @@
                         BorderThickness="1" CornerRadius="20" Padding="12,8" Margin="0,0,8,0">
                     <TextBox x:Name="TxtInput" BorderThickness="0" Background="Transparent"
                              FontSize="13" VerticalAlignment="Center"
-                             Text="输入消息..." Foreground="{StaticResource TextSecondaryColor}"/>
+                             Text="输入消息..." Foreground="{StaticResource TextSecondaryColor}"
+                             KeyDown="TxtInput_KeyDown"/>
                 </Border>
                 <Button x:Name="BtnSend" Grid.Column="1" Width="36" Height="36"
                         Background="{StaticResource PrimaryColor}" BorderThickness="0">

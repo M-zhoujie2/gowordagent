@@ -23,6 +23,7 @@ namespace GOWordAgentAddIn
         private readonly int _concurrency;
         private readonly SemaphoreSlim _semaphore;
         private readonly Dispatcher _dispatcher;
+        private readonly string _proofreadMode;
 
         // 文档分段器
         private readonly DocumentSegmenter _segmenter;
@@ -52,7 +53,9 @@ namespace GOWordAgentAddIn
         /// <param name="llmService">LLM服务</param>
         /// <param name="systemPrompt">系统提示词</param>
         /// <param name="concurrency">并发数（1-10）</param>
-        public ProofreadService(ILLMService llmService, string systemPrompt, int concurrency = 5, SegmenterConfig segmenterConfig = null)
+        /// <param name="segmenterConfig">分段器配置</param>
+        /// <param name="proofreadMode">校验模式（精准校验/全文校验）</param>
+        public ProofreadService(ILLMService llmService, string systemPrompt, int concurrency = 5, SegmenterConfig segmenterConfig = null, string proofreadMode = null)
         {
             _llmService = llmService ?? throw new ArgumentNullException(nameof(llmService));
             _systemPrompt = systemPrompt ?? throw new ArgumentNullException(nameof(systemPrompt));
@@ -60,6 +63,7 @@ namespace GOWordAgentAddIn
             _semaphore = new SemaphoreSlim(_concurrency);
             _dispatcher = Application.Current?.Dispatcher ?? Dispatcher.CurrentDispatcher;
             _segmenter = new DocumentSegmenter(segmenterConfig);
+            _proofreadMode = proofreadMode ?? "精准校验";
         }
 
         #region 公共方法
@@ -180,13 +184,13 @@ namespace GOWordAgentAddIn
             {
                 var index = i;
                 var para = paragraphs[i];
-                var cacheKey = ProofreadCacheManager.ComputeHash(para);
+                var cacheKey = ProofreadCacheManager.ComputeHash(para, _proofreadMode);
 
                 // 检查是否与之前相同
                 if (previousResults != null && index < previousResults.Count)
                 {
                     var prev = previousResults[index];
-                    if (prev != null && ProofreadCacheManager.ComputeHash(prev.OriginalText) == cacheKey)
+                    if (prev != null && ProofreadCacheManager.ComputeHash(prev.OriginalText, _proofreadMode) == cacheKey)
                     {
                         // 段落未变化，复用结果
                         results[index] = new ParagraphResult
@@ -247,8 +251,8 @@ namespace GOWordAgentAddIn
             {
                 Debug.WriteLine($"[ProofreadService] 开始处理段落 {index + 1}/{total}, 长度={paragraph.Length}");
                 
-                // 检查缓存
-                if (ProofreadCacheManager.TryGetCachedResult(paragraph, index, out var cachedResult))
+                // 检查缓存（传入校验模式以确保不同模式使用不同缓存）
+                if (ProofreadCacheManager.TryGetCachedResult(paragraph, index, out var cachedResult, _proofreadMode))
                 {
                     stopwatch.Stop();
                     return cachedResult;
@@ -288,8 +292,8 @@ namespace GOWordAgentAddIn
 
                 stopwatch.Stop();
 
-                // 存入缓存
-                ProofreadCacheManager.StoreResult(paragraph, result);
+                // 存入缓存（传入校验模式以确保不同模式使用不同缓存）
+                ProofreadCacheManager.StoreResult(paragraph, result, _proofreadMode);
 
                 return result;
             }

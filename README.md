@@ -99,8 +99,8 @@
 ## 相关链接
 
 - 原项目地址：https://github.com/jsxyhelu/GOWordAgentAddIn.git
-- 飞书文档：https://uh9iow7vir.feishu.cn/wiki/U8Dpwc2NWie8J3kH2FNcahuinab
-- 博客文章：https://www.cnblogs.com/jsxyhelu/p/19497787
+- 原项目飞书文档：https://uh9iow7vir.feishu.cn/wiki/U8Dpwc2NWie8J3kH2FNcahuinab
+- 原项目博客文章：https://www.cnblogs.com/jsxyhelu/p/19497787
 
 ## 许可证
 
