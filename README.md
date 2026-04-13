@@ -1,107 +1,208 @@
-# 智能校对
+# GOWordAgent 智能校对
 
-智能校对 是一个基于 **VSTO (Visual Studio Tools for Office)** 开发的 Word 插件，在原项目GOWordAgentAddIn基础上开发完成，提供 AI 智能校对功能。它将文档内容发送给 AI 模型，获取修改建议，并以修订和批注的形式写回 Word 文档。
+银河麒麟 V10 版本 - WPS Office 智能校对插件
+
+## 项目简介
+
+GOWordAgent 是一个基于 **.NET 8** 开发的 **WPS Office for Linux** 插件，提供 AI 智能校对功能。它将文档内容发送给 AI 模型，获取修改建议，并以修订和批注的形式写回 WPS 文档。
 
 ## 功能特性
 
-### 1. AI 问答对话
-- 在侧边栏与 AI 进行实时对话
-- 支持多种 AI 提供商：DeepSeek、GLM、Ollama
-- 配置自动保存，支持自动连接
-
-### 2. 智能校对
+### 1. 智能校对
 - **精准校验**：针对错别字、语病、术语不一致等精确纠错
 - **全文校验**：系统性校对，包括语法、标点、用词、逻辑连贯性
 - 自定义提示词，支持两种校验模式独立配置
 
-### 3. 修订与批注
-- 使用 Word 原生修订功能（TrackRevisions）
+### 2. 修订与批注
+- 使用 WPS 原生修订功能（TrackRevisions）
 - 标记原文（删除线）和建议文本（下划线）
 - 添加批注说明错误类型和修改理由
-- 通过 Word 审阅面板接受或拒绝修订
+- 通过 WPS 审阅面板接受或拒绝修订
 
-### 4. 问题定位
+### 3. 问题定位
 - 聊天框显示发现的每个问题
 - 点击"定位"按钮跳转到文档对应位置
 - 支持严重程度标记（high/medium/low）
 
+### 4. 多 AI 提供商支持
+- DeepSeek
+- 智谱 AI (GLM)
+- Ollama 本地模型
+
 ## 技术架构
 
-### 核心组件
+### 系统架构
 
-| 文件/目录 | 说明 |
-|-----------|------|
-| `GOWordAgentPaneWpf.xaml.cs` | UI 主控类，处理交互和 Word 操作 |
-| `ProofreadService.cs` | 校对服务（并发、缓存、报告） |
-| `WordDocumentService.cs` | Word COM 操作封装 |
-| `WordProofreadController.cs` | 校对结果与 Word 文档交互控制 |
-| `ConfigManager.cs` | 配置管理，DPAPI 加密存储 |
-| `BaseLLMService.cs` | LLM 服务抽象基类 |
-| `Models/` | 数据模型（ParagraphResult, ProofreadIssueItem 等） |
-| `ViewModels/` | MVVM 视图模型（数据绑定） |
+```
+银河麒麟 V10 桌面
+│
+├── WPS 文字 (Linux)
+│   └── WPS 加载项 (HTML/JS/CSS)
+│       ├── 设置面板
+│       ├── 校对结果列表  
+│       └── HTTP 通信
+│
+└── .NET 8 后端服务 (Self-Contained)
+    ├── Minimal API (Kestrel)
+    ├── GOWordAgent.Core (核心逻辑)
+    │   ├── ProofreadService (校对服务)
+    │   ├── BaseLLMService (LLM 基类)
+    │   ├── DocumentSegmenter (文档分段)
+    │   └── Cache/Parser/Models
+    └── 配置管理 (AES-GCM 加密)
+```
 
-### 关键技术
-- **并发处理**：支持 3-5 段并行校对（Semaphore 控制）
-- **缓存机制**：内存级缓存（LRU 淘汰），基于 SHA256 内容哈希
-- **分段处理**：智能分段，支持重叠防止边界错误
-- **配置加密**：使用 DPAPI 加密 API Key 和配置
-- **MVVM 架构**：数据驱动 UI，支持 DataTemplate 绑定
-- **COM 安全**：完善的 Marshal.ReleaseComObject 管理
+### 项目结构
 
-## 使用说明
+```
+GOWordAgent/
+├── GOWordAgent.Core/              # .NET 8 共享类库
+│   ├── Config/
+│   │   └── ConfigManager.cs       # 跨平台配置管理 (AES-GCM)
+│   ├── Models/
+│   │   └── ProofreadModels.cs     # 数据模型
+│   └── Services/
+│       ├── ProofreadService.cs    # 校对服务核心
+│       ├── BaseLLMService.cs      # LLM 服务基类
+│       ├── DocumentSegmenter.cs   # 智能文档分段
+│       ├── ProofreadCacheManager.cs # LRU 缓存
+│       └── ProofreadIssueParser.cs  # 结果解析
+│
+├── GOWordAgent.WpsService/        # .NET 8 后端服务
+│   ├── Program.cs                 # 服务入口
+│   └── Controllers/
+│       └── ProofreadController.cs # API 控制器
+│
+├── GOWordAgent.WpsAddon/          # WPS 加载项
+│   ├── index.html                 # 主页面
+│   ├── main.js                    # 入口脚本
+│   ├── css/style.css              # 样式
+│   └── js/
+│       ├── apiClient.js           # 后端通信
+│       ├── documentService.js     # WPS JS API 封装
+│       ├── proofreadService.js    # 校对工作流
+│       └── uiController.js        # UI 控制
+│
+├── Scripts/                       # 部署脚本
+│   ├── install.sh                 # 安装脚本
+│   ├── uninstall.sh               # 卸载脚本
+│   └── gowordagent.service        # systemd 配置
+│
+└── Docs/                          # 文档
+    ├── PROJECT_OVERVIEW.md        # 项目介绍
+    ├── FILE_REFERENCE.md          # 文件速查
+    ├── KYLIN_V10_BUILD.md         # 构建指南
+    └── TEST_GUIDE.md              # 测试指南
+```
 
-### 开发环境
-1. Visual Studio 2019/2022
-2. .NET Framework 4.8
-3. Microsoft Office 开发工具
+## 开发环境
 
-### 依赖包
-- `Newtonsoft.Json` - JSON 序列化
-- `Microsoft.Office.Interop.Word` - Word 自动化
+### 必需软件
+- **.NET 8 SDK** (https://dotnet.microsoft.com/download/dotnet/8.0)
+- **WPS Office for Linux** 12.1.2.25838+
+- **银河麒麟 V10 SP1** (x86_64)
 
-### 安装步骤
-1. 克隆仓库并使用 Visual Studio 打开
-2. 还原 NuGet 包
-3. 编译项目（Release 或 Debug）
-4. 运行 Word，在 COM 加载项中启用 gowordagent
+### 可选软件
+- Visual Studio 2022 或 VS Code（Windows 开发）
+- Postman 或 curl（API 测试）
 
-### 使用流程
-1. 启动 Word 并打开需要校对的文档
-2. 在 Add-In 侧边栏选择 AI 提供商并配置 API Key
-3. 点击"保存并连接"测试连接
-4. 选择校验模式（精准校验/全文校验）
-5. 点击"纠错（审阅）"按钮开始校对
-6. 在 Word 审阅面板中接受或拒绝修订建议
+## 快速开始
+
+### 1. 构建项目
+
+```bash
+# 克隆仓库
+git clone <repository-url>
+cd GOWordAgent
+
+# 构建 Core 类库
+dotnet build GOWordAgent.Core/GOWordAgent.Core.csproj -c Release
+
+# 构建后端服务（linux-x64）
+dotnet publish GOWordAgent.WpsService/GOWordAgent.WpsService.csproj \
+    -c Release -r linux-x64 --self-contained true \
+    -p:PublishSingleFile=true -o ./publish/backend
+```
+
+### 2. 打包
+
+```bash
+mkdir -p release/backend release/addon
+cp -r publish/backend/* release/backend/
+cp -r GOWordAgent.WpsAddon/* release/addon/
+cp Scripts/* release/
+```
+
+### 3. 部署到银河麒麟 V10
+
+```bash
+# 复制到目标机器
+scp -r release/ user@kylin-host:/tmp/gowordagent-release
+
+# SSH 登录并安装
+ssh user@kylin-host
+cd /tmp/gowordagent-release
+./install.sh
+```
+
+### 4. 验证
+
+```bash
+# 检查服务状态
+systemctl --user status gowordagent
+
+# 测试 API
+PORT=$(cat /tmp/gowordagent-port.json | grep -o '"port":[0-9]*' | cut -d: -f2)
+curl http://127.0.0.1:$PORT/api/proofread/health
+```
 
 ## 配置说明
 
-配置文件保存在 `%AppData%\GOWordAgentAddIn\config.dat`，包含：
+配置文件位置：`~/.config/gowordagent/config.dat`
+
+配置内容包括：
 - AI 提供商和 API 配置
-- 自定义提示词（支持两种模式独立配置）
+- 自定义提示词（支持精准/全文两种模式）
 - 自动连接设置
 
-## 注意事项
+**加密方式**：使用 AES-GCM + `/etc/machine-id` 派生密钥
 
-1. API Key 使用 DPAPI 加密存储，非明文保存
-2. 校对前请确保文档已保存
-3. 大文档（>3000字）会自动分段处理
-4. 缓存仅在当前 Word 会话有效，关闭后清空
+## 卸载
+
+```bash
+./Scripts/uninstall.sh
+```
 
 ## 文档
 
 | 文档 | 说明 |
 |------|------|
-| [架构说明](./Docs/ARCHITECTURE.md) | 项目架构、数据流、技术细节 |
-| [API 文档](./Docs/API.md) | 服务接口、数据模型说明 |
-| [使用指南](./Docs/USAGE.md) | 安装配置、故障排除 |
-| [更新日志](./Docs/CHANGELOG.md) | 版本变更记录 |
+| [PROJECT_OVERVIEW.md](Docs/PROJECT_OVERVIEW.md) | 项目全景介绍 |
+| [FILE_REFERENCE.md](Docs/FILE_REFERENCE.md) | 文件速查手册 |
+| [KYLIN_V10_BUILD.md](KYLIN_V10_BUILD.md) | 构建和部署指南 |
+| [TEST_GUIDE.md](TEST_GUIDE.md) | 测试指南 |
+| [MIGRATION_COMPLETE.md](MIGRATION_COMPLETE.md) | 改造完成报告 |
 
-## 相关链接
+## 技术特点
 
-- 原项目地址：https://github.com/jsxyhelu/GOWordAgentAddIn.git
-- 原项目飞书文档：https://uh9iow7vir.feishu.cn/wiki/U8Dpwc2NWie8J3kH2FNcahuinab
-- 原项目博客文章：https://www.cnblogs.com/jsxyhelu/p/19497787
+- **跨平台**：.NET 8 Self-Contained 部署，零运行时依赖
+- **前后分离**：WPS 加载项（HTML/JS）+ .NET 后端（HTTP API）
+- **精确定位**：使用字符偏移量替代查找，避免重复匹配
+- **安全加密**：AES-GCM 加密配置，基于机器 ID 派生密钥
+- **并发处理**：支持 3-5 段并行校对
+- **智能缓存**：内存级 LRU 缓存，基于内容哈希
+
+## 系统要求
+
+- **操作系统**：银河麒麟 V10 SP1 (x86_64)
+- **WPS Office**：12.1.2.25838 或更高版本
+- **运行内存**：4GB+
+- **磁盘空间**：200MB（后端服务）
 
 ## 许可证
 
 MIT License
+
+---
+
+**注意**：本项目专为银河麒麟 V10 + WPS Office 环境开发，不支持 Windows/Microsoft Word。
