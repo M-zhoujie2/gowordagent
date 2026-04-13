@@ -1,0 +1,13 @@
+{
+  "name": "gowordagent-wps-addon",
+  "version": "1.0.0",
+  "description": "GOWordAgent WPS 加载项 - 银河麒麟 V10",
+  "main": "main.js",
+  "wps": {
+    "id": "com.gowordagent.addin",
+    "name": "智能校对",
+    "version": "1.0.0",
+    "host": "wpp,wet",
+    "url": "index.html"
+  }
+}

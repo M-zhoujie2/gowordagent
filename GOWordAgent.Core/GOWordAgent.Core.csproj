@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>GOWordAgent.Core</AssemblyName>
+    <RootNamespace>GOWordAgentAddIn</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 保留 Newtonsoft.Json，不进行 System.Text.Json 迁移 -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+</Project>

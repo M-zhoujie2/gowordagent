@@ -1,0 +1,14 @@
+[Unit]
+Description=GOWordAgent Backend Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/gowordagent/gowordagent-server
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

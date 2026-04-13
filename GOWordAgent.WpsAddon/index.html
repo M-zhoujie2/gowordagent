@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能校对</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- 状态栏 -->
+        <div id="status-bar" class="status-bar">
+            <span id="connection-status" class="status-disconnected">● 未连接</span>
+        </div>
+        
+        <!-- 设置面板 -->
+        <div id="settings-panel" class="panel">
+            <h3>AI 配置</h3>
+            <div class="form-group">
+                <label>AI 提供商</label>
+                <select id="provider-select">
+                    <option value="DeepSeek">DeepSeek</option>
+                    <option value="GLM">智谱 AI</option>
+                    <option value="Ollama">本地 Ollama</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="password" id="api-key" placeholder="输入 API Key">
+            </div>
+            <div class="form-group">
+                <label>API URL (可选)</label>
+                <input type="text" id="api-url" placeholder="使用默认值">
+            </div>
+            <div class="form-group">
+                <label>模型</label>
+                <input type="text" id="model" placeholder="deepseek-chat">
+            </div>
+            <div class="form-group">
+                <label>校验模式</label>
+                <div class="radio-group">
+                    <label><input type="radio" name="mode" value="Precise" checked> 精准校验</label>
+                    <label><input type="radio" name="mode" value="FullText"> 全文校验</label>
+                </div>
+            </div>
+            <button id="btn-connect" class="btn-primary">保存并连接</button>
+        </div>
+        
+        <!-- 结果面板 -->
+        <div id="results-panel" class="panel hidden">
+            <h3>校对结果</h3>
+            <div id="progress-info" class="progress-info"></div>
+            <div id="issues-list" class="issues-list"></div>
+        </div>
+        
+        <!-- 操作栏 -->
+        <div class="action-bar">
+            <button id="btn-proofread" class="btn-primary" disabled>开始校对</button>
+            <button id="btn-clear" class="btn-secondary">清空</button>
+        </div>
+    </div>
+    
+    <script src="js/apiClient.js"></script>
+    <script src="js/documentService.js"></script>
+    <script src="js/proofreadService.js"></script>
+    <script src="js/uiController.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
