@@ -19,12 +19,39 @@ var UIController = {
             apiKeyInput: document.getElementById('api-key'),
             apiUrlInput: document.getElementById('api-url'),
             modelInput: document.getElementById('model'),
+            manualPortInput: document.getElementById('manual-port'),
             btnConnect: document.getElementById('btn-connect'),
             btnProofread: document.getElementById('btn-proofread'),
+            btnCancel: document.getElementById('btn-cancel'),
             btnClear: document.getElementById('btn-clear')
         };
 
         this.bindEvents();
+        this.loadSavedConfig();
+    },
+
+    loadSavedConfig: function() {
+        var self = this;
+        if (!ApiClient.baseUrl) {
+            // 服务尚未发现，延迟加载
+            setTimeout(function() { self.loadSavedConfig(); }, 1000);
+            return;
+        }
+        ApiClient.getConfig(function(err, data) {
+            if (err || !data) return;
+            if (data.provider) {
+                self.elements.providerSelect.value = data.provider;
+            }
+            if (data.model) {
+                self.elements.modelInput.value = data.model;
+            }
+            if (data.proofreadMode === '全文校验') {
+                var radios = document.querySelectorAll('input[name="mode"]');
+                for (var i = 0; i < radios.length; i++) {
+                    radios[i].checked = (radios[i].value === 'FullText');
+                }
+            }
+        });
     },
 
     bindEvents: function() {
@@ -36,6 +63,10 @@ var UIController = {
 
         this.elements.btnProofread.addEventListener('click', function() {
             ProofreadWorkflow.startProofread();
+        });
+
+        this.elements.btnCancel.addEventListener('click', function() {
+            ProofreadWorkflow.cancelProofread();
         });
 
         this.elements.btnClear.addEventListener('click', function() {
@@ -64,11 +95,6 @@ var UIController = {
         }
     },
 
-    showSettings: function() {
-        this.elements.settingsPanel.classList.remove('hidden');
-        this.elements.resultsPanel.classList.add('hidden');
-    },
-
     showResults: function() {
         this.elements.settingsPanel.classList.add('hidden');
         this.elements.resultsPanel.classList.remove('hidden');
@@ -81,6 +107,18 @@ var UIController = {
 
     hideProgress: function() {
         this.elements.progressInfo.style.display = 'none';
+    },
+
+    showCancelBtn: function() {
+        if (this.elements.btnCancel) {
+            this.elements.btnCancel.style.display = 'inline-block';
+        }
+    },
+
+    hideCancelBtn: function() {
+        if (this.elements.btnCancel) {
+            this.elements.btnCancel.style.display = 'none';
+        }
     },
 
     clearResults: function() {
@@ -125,11 +163,14 @@ var UIController = {
 
     getConfig: function() {
         var mode = document.querySelector('input[name="mode"]:checked');
+        var manualPortStr = this.elements.manualPortInput ? this.elements.manualPortInput.value.trim() : '';
+        var manualPort = parseInt(manualPortStr, 10);
         return {
             provider: this.elements.providerSelect.value,
             apiKey: this.elements.apiKeyInput.value,
             apiUrl: this.elements.apiUrlInput.value,
             model: this.elements.modelInput.value,
+            manualPort: (!isNaN(manualPort) && manualPort > 0) ? manualPort : 0,
             mode: mode ? mode.value : 'Precise'
         };
     },

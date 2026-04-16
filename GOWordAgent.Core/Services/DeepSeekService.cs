@@ -7,7 +7,7 @@ namespace GOWordAgentAddIn
     {
         public override string ProviderName => "DeepSeek";
 
-        public DeepSeekService(string apiKey, string apiUrl = null, string model = null)
+        public DeepSeekService(string apiKey, string? apiUrl = null, string? model = null)
             : base(apiKey, apiUrl, model,
                   "https://api.deepseek.com/v1/chat/completions",
                   "deepseek-chat")

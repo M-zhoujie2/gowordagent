@@ -22,24 +22,16 @@ namespace GOWordAgentAddIn
 
         public abstract string ProviderName { get; }
 
-        protected BaseLLMService(string apiKey, string apiUrl, string model, string defaultApiUrl, string defaultModel)
+        protected BaseLLMService(string apiKey, string? apiUrl, string? model, string defaultApiUrl, string defaultModel)
         {
             _apiKey = apiKey;
             _apiUrl = string.IsNullOrWhiteSpace(apiUrl) ? defaultApiUrl : apiUrl;
             _model = string.IsNullOrWhiteSpace(model) ? defaultModel : model;
 
-            // 创建 HttpClient
-            _httpClient = new HttpClient
-            {
-                Timeout = TimeSpan.FromSeconds(120)
-            };
-            
-            _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
-            
-            if (!string.IsNullOrEmpty(apiKey))
-            {
-                _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-            }
+            // 使用共享 HttpClient 工厂，避免 Socket 耗尽（Linux 下 TIME_WAIT 堆积问题）
+            _httpClient = SharedHttpClientFactory.GetOrCreate(ProviderName, _apiUrl, _apiKey);
+            // 如果 client 已存在但 API Key 变更，更新 Authorization
+            SharedHttpClientFactory.UpdateAuthorization(ProviderName, _apiUrl, _apiKey);
         }
 
         public virtual async Task<string> SendMessageAsync(string userMessage, CancellationToken cancellationToken = default)
@@ -56,7 +48,7 @@ namespace GOWordAgentAddIn
         /// <summary>
         /// 校对请求超时时间（秒）
         /// </summary>
-        protected virtual int ProofreadTimeoutSeconds => 300;
+        protected virtual int ProofreadTimeoutSeconds => 180;
 
         public virtual async Task<string> SendProofreadMessageAsync(string systemContent, string userContent, CancellationToken cancellationToken = default)
         {
@@ -84,6 +76,24 @@ namespace GOWordAgentAddIn
         protected virtual string ParseResponse(JObject jsonResponse)
         {
             return jsonResponse["choices"]?[0]?["message"]?.Value<string>("content") ?? "未获取到回复内容";
+        }
+
+        /// <summary>
+        /// 安全解析 JSON，返回 null 表示解析失败
+        /// </summary>
+        private static JObject? TryParseJson(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return null;
+            try
+            {
+                var token = JToken.Parse(text);
+                return token as JObject;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         protected virtual Dictionary<string, object> BuildRequestBodyDict(List<object> messages)
@@ -124,67 +134,103 @@ namespace GOWordAgentAddIn
 
         protected virtual async Task<string> PostAsync(string jsonContent, CancellationToken cancellationToken = default)
         {
-            var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+            const int maxRetries = 2;
+            int attempt = 0;
 
-            try
+            while (true)
             {
-                using (var content = new StringContent(jsonContent, Encoding.UTF8, "application/json"))
+                attempt++;
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+                try
                 {
-                    HttpResponseMessage response = await _httpClient.PostAsync(_apiUrl, content, cancellationToken)
-                        .ConfigureAwait(false);
-                    
-                    string responseBody = await response.Content.ReadAsStringAsync()
-                        .ConfigureAwait(false);
-
-                    stopwatch.Stop();
-
-                    if (response.IsSuccessStatusCode)
+                    using (var content = new StringContent(jsonContent, Encoding.UTF8, "application/json"))
                     {
-                        JObject jsonResponse = JObject.Parse(responseBody);
-                        return ParseResponse(jsonResponse);
-                    }
+                        HttpResponseMessage response = await _httpClient.PostAsync(_apiUrl, content, cancellationToken)
+                            .ConfigureAwait(false);
 
-                    throw new LLMServiceException(
-                        $"API 调用失败: {response.StatusCode}",
-                        response.StatusCode,
-                        responseBody,
-                        ProviderName);
+                        string responseBody = await response.Content.ReadAsStringAsync()
+                            .ConfigureAwait(false);
+
+                        stopwatch.Stop();
+
+                        if (response.IsSuccessStatusCode)
+                        {
+                            JObject? jsonResponse = TryParseJson(responseBody);
+                            if (jsonResponse != null)
+                            {
+                                return ParseResponse(jsonResponse);
+                            }
+                            throw new LLMServiceException(
+                                "API 返回了非 JSON 内容，可能是网关错误或认证页拦截",
+                                response.StatusCode,
+                                responseBody,
+                                ProviderName);
+                        }
+
+                        // 对可重试状态码进行指数退避重试
+                        if (attempt <= maxRetries && IsRetryableStatusCode(response.StatusCode))
+                        {
+                            int delayMs = (int)Math.Pow(2, attempt) * 500;
+                            await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
+                            continue;
+                        }
+
+                        throw new LLMServiceException(
+                            $"API 调用失败: {response.StatusCode}",
+                            response.StatusCode,
+                            responseBody,
+                            ProviderName);
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (TaskCanceledException) when (attempt <= maxRetries)
+                {
+                    int delayMs = (int)Math.Pow(2, attempt) * 500;
+                    await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+                catch (LLMServiceException) when (attempt <= maxRetries)
+                {
+                    // 仅对超时类错误继续重试，业务错误直接抛出
+                    throw;
+                }
+                catch (HttpRequestException) when (attempt <= maxRetries)
+                {
+                    int delayMs = (int)Math.Pow(2, attempt) * 500;
+                    await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+                catch (Exception ex)
+                {
+                    throw new LLMServiceException($"发生错误: {ex.Message}", ex, ProviderName);
                 }
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (TaskCanceledException ex)
-            {
-                throw new LLMServiceException("请求超时，请检查网络连接或稍后重试", ex, ProviderName);
-            }
-            catch (Exception ex)
-            {
-                throw new LLMServiceException($"发生错误: {ex.Message}", ex, ProviderName);
-            }
+        }
+
+        private static bool IsRetryableStatusCode(HttpStatusCode statusCode)
+        {
+            return statusCode == HttpStatusCode.BadGateway
+                || statusCode == HttpStatusCode.ServiceUnavailable
+                || statusCode == HttpStatusCode.GatewayTimeout
+                || statusCode == HttpStatusCode.TooManyRequests
+                || (int)statusCode == 499; // Client Closed Request (nginx)
         }
 
         #region IDisposable
 
-        private bool _disposed = false;
-
         public void Dispose()
         {
-            Dispose(true);
+            // HttpClient 由 SharedHttpClientFactory 全局复用，不在此处释放
             GC.SuppressFinalize(this);
         }
 
         protected virtual void Dispose(bool disposing)
         {
-            if (!_disposed)
-            {
-                if (disposing)
-                {
-                    _httpClient?.Dispose();
-                }
-                _disposed = true;
-            }
+            // HttpClient 由 SharedHttpClientFactory 全局复用，不在此处释放
         }
 
         #endregion

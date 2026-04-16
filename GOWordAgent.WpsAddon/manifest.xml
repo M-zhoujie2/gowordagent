@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wap:manifest xmlns:wap="http://www.wps.cn/wap">
+    <wap:main>
+        <wap:name>GOWordAgent</wap:name>
+        <wap:description>智能校对助手 - AI 驱动的文档校对插件</wap:description>
+        <wap:version>1.0.0</wap:version>
+        <wap:author>GOWordAgent Team</wap:author>
+        <wap:homepage>index.html</wap:homepage>
+        <wap:type>taskpane</wap:type>
+    </wap:main>
+    <wap:requirements>
+        <wap:wps version="12.1.2"/>
+    </wap:requirements>
+</wap:manifest>

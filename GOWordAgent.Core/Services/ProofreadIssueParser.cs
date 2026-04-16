@@ -10,9 +10,11 @@ namespace GOWordAgentAddIn
     /// </summary>
     public static class ProofreadIssueParser
     {
+        // 注意：不使用 RegexOptions.Compiled，因为在 Linux 上可能导致内存问题
+        // .NET 8 中 Compiled 的行为有所变化，且对于静态只读正则，JIT 已经足够优化
         private static readonly Regex ProofreadItemRegex = new Regex(
             @"【第(?<index>\d+)处】类型：(?<type>[^\r\n|]+)(?:[｜|]严重度：(?<severity>[^\r\n]+))?\r?\n原文：(?<original>.*?)\r?\n修改：(?<modified>.*?)\r?\n理由：(?<reason>.*?)(?=\r?\n【第|$)",
-            RegexOptions.Singleline | RegexOptions.Compiled | RegexOptions.CultureInvariant,
+            RegexOptions.Singleline | RegexOptions.CultureInvariant,
             TimeSpan.FromSeconds(5));
 
         public static List<ProofreadIssueItem> ParseProofreadItems(string aiResponse)
@@ -45,7 +47,7 @@ namespace GOWordAgentAddIn
         public static int CountIssues(string text)
         {
             if (string.IsNullOrWhiteSpace(text)) return 0;
-            var matches = Regex.Matches(text, @"【第\d+处】", RegexOptions.Compiled);
+            var matches = Regex.Matches(text, @"【第\d+处】");
             return matches.Count;
         }
 
@@ -55,7 +57,7 @@ namespace GOWordAgentAddIn
             if (string.IsNullOrWhiteSpace(text)) return categories;
 
             var pattern = @"【第\d+处】类型：([^\r\n:]+)";
-            foreach (Match match in Regex.Matches(text, pattern, RegexOptions.Compiled))
+            foreach (Match match in Regex.Matches(text, pattern))
             {
                 string cat = match.Groups[1].Value.Trim();
 

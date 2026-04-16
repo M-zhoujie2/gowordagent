@@ -108,7 +108,35 @@ GOWordAgent/
 
 ## 快速开始
 
-### 1. 构建项目
+### 方式一：单文件安装器（推荐）
+
+```bash
+# 下载单文件安装器
+wget https://your-server/GOWordAgent-Install-linux-x64-1.0.0.run
+
+# 添加执行权限并运行
+chmod +x GOWordAgent-Install-linux-x64-1.0.0.run
+./GOWordAgent-Install-linux-x64-1.0.0.run
+```
+
+支持图形界面（双击安装）和命令行界面，自动配置 Systemd 服务。
+
+### 方式二：脚本部署
+
+```bash
+# 下载预编译发布包
+tar -xzf gowordagent-linux-x64-1.0.0.tar.gz
+cd gowordagent-linux-x64-1.0.0
+
+# 一键部署
+./deploy-linux.sh
+```
+
+详见 [Docs/ONE_CLICK_INSTALLER.md](Docs/ONE_CLICK_INSTALLER.md)
+
+### 方式二：手动构建部署
+
+#### 1. 构建项目
 
 ```bash
 # 克隆仓库

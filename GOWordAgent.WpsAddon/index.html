@@ -37,6 +37,10 @@
                 <input type="text" id="model" placeholder="deepseek-chat">
             </div>
             <div class="form-group">
+                <label>后端端口（可选，自动发现失败时填写）</label>
+                <input type="text" id="manual-port" placeholder="例如 51234">
+            </div>
+            <div class="form-group">
                 <label>校验模式</label>
                 <div class="radio-group">
                     <label><input type="radio" name="mode" value="Precise" checked> 精准校验</label>
@@ -56,6 +60,7 @@
         <!-- 操作栏 -->
         <div class="action-bar">
             <button id="btn-proofread" class="btn-primary" disabled>开始校对</button>
+            <button id="btn-cancel" class="btn-secondary" style="display:none;">取消校对</button>
             <button id="btn-clear" class="btn-secondary">清空</button>
         </div>
     </div>

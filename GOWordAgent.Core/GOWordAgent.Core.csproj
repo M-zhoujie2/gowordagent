@@ -11,6 +11,8 @@
   <ItemGroup>
     <!-- 保留 Newtonsoft.Json，不进行 System.Text.Json 迁移 -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <!-- Windows DPAPI 支持 -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
 
 </Project>

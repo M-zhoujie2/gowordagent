@@ -74,11 +74,12 @@ cd /tmp/gowordagent-release
 # 检查服务状态
 systemctl --user status gowordagent
 
-# 检查端口文件
-cat /tmp/gowordagent-port.json
+# 检查端口文件（用户特定）
+PORT_FILE="/tmp/gowordagent-port-$USER.json"
+cat "$PORT_FILE"
 
 # 测试 API
-curl http://127.0.0.1:$(cat /tmp/gowordagent-port.json | grep -o '"port":[0-9]*' | cut -d: -f2)/api/proofread/health
+curl http://127.0.0.1:$(cat "$PORT_FILE" | grep -o '"port":[0-9]*' | cut -d: -f2)/api/proofread/health
 ```
 
 ### 4. 启动 WPS
@@ -122,6 +123,6 @@ netstat -tlnp | grep gowordagent
 
 ### 3. 无法连接后端
 
-- 确认 `/tmp/gowordagent-port.json` 存在
+- 确认 `/tmp/gowordagent-port-$USER.json` 存在（用户特定的端口文件）
 - 检查防火墙设置
 - 验证健康检查接口：`curl http://127.0.0.1:PORT/api/proofread/health`

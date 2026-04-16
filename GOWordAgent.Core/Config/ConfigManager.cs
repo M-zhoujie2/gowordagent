@@ -1,11 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using Newtonsoft.Json;
+using GOWordAgentAddIn.Models;
 
 namespace GOWordAgentAddIn
 {
@@ -47,8 +48,7 @@ namespace GOWordAgentAddIn
         public string ProofreadMode { get; set; } = "精准校验";
         public string ProofreadPrecisePrompt { get; set; } = "";
         public string ProofreadFullTextPrompt { get; set; } = "";
-        public string ProofreadPrompt { get; set; } = "";
-        public string PrivacyConsentLastShownDate { get; set; } = "";
+
     }
 
     /// <summary>
@@ -56,7 +56,7 @@ namespace GOWordAgentAddIn
     /// </summary>
     public static class ConfigManager
     {
-        private static string ConfigDir => RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+        public static string ConfigDir => RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GOWordAgentAddIn")
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "gowordagent");
 
@@ -68,6 +68,7 @@ namespace GOWordAgentAddIn
         {
             try
             {
+                Directory.CreateDirectory(ConfigDir);
                 if (!File.Exists(ConfigFile))
                 {
                     CurrentConfig = new AIConfig();
@@ -113,6 +114,21 @@ namespace GOWordAgentAddIn
 
                 Directory.CreateDirectory(ConfigDir);
 
+                // 检查磁盘空间（至少 1MB）
+                try
+                {
+                    var configDirInfo = new DirectoryInfo(ConfigDir);
+                    var driveInfo = new DriveInfo(configDirInfo.Root.FullName);
+                    if (driveInfo.AvailableFreeSpace < 1024 * 1024)
+                    {
+                        throw new IOException("磁盘空间不足，无法保存配置");
+                    }
+                }
+                catch (Exception ex) when (ex is not IOException)
+                {
+                    // 在某些文件系统上 DriveInfo 可能不可用，忽略非 IO 异常
+                }
+
                 string json = JsonConvert.SerializeObject(config, Formatting.Indented);
                 byte[] plainBytes = Encoding.UTF8.GetBytes(json);
                 byte[] encrypted;
@@ -126,7 +142,10 @@ namespace GOWordAgentAddIn
                     encrypted = LinuxCrypto.Encrypt(plainBytes);
                 }
 
-                File.WriteAllBytes(ConfigFile, encrypted);
+                var tempFile = ConfigFile + ".tmp";
+                File.WriteAllBytes(tempFile, encrypted);
+                File.Move(tempFile, ConfigFile, overwrite: true);
+                SetUnixFilePermissions(ConfigFile, 600);
                 CurrentConfig = config;
             }
             catch (Exception ex)
@@ -134,6 +153,26 @@ namespace GOWordAgentAddIn
                 Console.WriteLine($"保存配置失败: {ex.Message}");
                 throw;
             }
+        }
+
+        private static void SetUnixFilePermissions(string path, int mode)
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                return;
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo("chmod")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false
+                };
+                psi.ArgumentList.Add(Convert.ToString(mode, 8));
+                psi.ArgumentList.Add(path);
+                using var proc = System.Diagnostics.Process.Start(psi);
+                proc?.WaitForExit(2000);
+            }
+            catch { /* 忽略权限设置失败 */ }
         }
 
         public static void SaveCurrentConfig(AIProvider provider, string apiKey, string apiUrl, string model, bool autoConnect = false)
@@ -167,17 +206,6 @@ namespace GOWordAgentAddIn
             return cfg;
         }
 
-        public static string GetConfigFilePath() => ConfigFile;
-
-        public static (string mode, string prompt) GetProofreadConfig()
-        {
-            var config = CurrentConfig;
-            string mode = string.IsNullOrEmpty(config.ProofreadMode) ? "精准校验" : config.ProofreadMode;
-            string prompt = mode == "全文校验" ? config.ProofreadFullTextPrompt : config.ProofreadPrecisePrompt;
-
-            return (mode, prompt);
-        }
-
         public static string GetProofreadPromptForMode(string mode)
         {
             var config = CurrentConfig;
@@ -188,49 +216,207 @@ namespace GOWordAgentAddIn
     }
 
     /// <summary>
-    /// Linux 加密实现 (AES-GCM + /etc/machine-id)
+    /// Linux 加密实现 (AES-GCM + /etc/machine-id + 随机 salt)
     /// </summary>
     public static class LinuxCrypto
     {
+        private static readonly string SaltFile = Path.Combine(ConfigManager.ConfigDir, ".salt");
+
+        /// <summary>
+        /// 从机器 ID 和 salt 派生密钥
+        /// </summary>
         private static byte[] DeriveKey()
         {
-            var machineId = File.ReadAllText("/etc/machine-id").Trim();
-            return SHA256.HashData(Encoding.UTF8.GetBytes(machineId));
+            string? machineId = TryGetMachineId();
+            byte[] salt = EnsureSalt();
+
+            if (string.IsNullOrWhiteSpace(machineId))
+            {
+                var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                machineId = homeDir + Environment.UserName;
+            }
+
+            // 使用 HKDF-like 组合：先分别哈希，再组合哈希
+            var machineBytes = Encoding.UTF8.GetBytes(machineId);
+            using var hmac = new HMACSHA256(salt);
+            return hmac.ComputeHash(machineBytes);
         }
 
+        /// <summary>
+        /// 确保 salt 文件存在（首次运行时生成 32 字节随机 salt）
+        /// </summary>
+        private static byte[] EnsureSalt()
+        {
+            try
+            {
+                Directory.CreateDirectory(ConfigManager.ConfigDir);
+                if (File.Exists(SaltFile))
+                {
+                    var salt = File.ReadAllBytes(SaltFile);
+                    if (salt.Length >= 16) return salt;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[LinuxCrypto] 读取 salt 文件失败: {ex.Message}");
+            }
+
+            var newSalt = RandomNumberGenerator.GetBytes(32);
+            try
+            {
+                var temp = SaltFile + ".tmp";
+                File.WriteAllBytes(temp, newSalt);
+                File.Move(temp, SaltFile, overwrite: true);
+                // 设置仅所有者可读写
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                {
+                    try
+                    {
+                        var psi = new System.Diagnostics.ProcessStartInfo("chmod")
+                        {
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            UseShellExecute = false
+                        };
+                        psi.ArgumentList.Add("600");
+                        psi.ArgumentList.Add(SaltFile);
+                        using var proc = System.Diagnostics.Process.Start(psi);
+                        proc?.WaitForExit(2000);
+                    }
+                    catch (Exception chmodEx)
+                    {
+                        Debug.WriteLine($"[LinuxCrypto] 设置 salt 文件权限失败: {chmodEx.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[LinuxCrypto] 写入 salt 文件失败: {ex.Message}");
+                // 如果旧 salt 不存在且写入失败，后续将无法解密配置，应抛出异常
+                if (!File.Exists(SaltFile))
+                {
+                    throw new InvalidOperationException($"无法创建加密 salt 文件 '{SaltFile}'，配置将无法安全保存。请检查磁盘空间和权限。", ex);
+                }
+            }
+            return newSalt;
+        }
+
+        /// <summary>
+        /// 尝试获取机器 ID（尝试多种来源）
+        /// </summary>
+        private static string? TryGetMachineId()
+        {
+            string[] possiblePaths = new[]
+            {
+                "/etc/machine-id",
+                "/var/lib/dbus/machine-id",
+                "/sys/class/dmi/id/product_uuid",
+                "/proc/sys/kernel/random/boot_id"
+            };
+
+            foreach (var path in possiblePaths)
+            {
+                try
+                {
+                    if (File.Exists(path))
+                    {
+                        var content = File.ReadAllText(path).Trim();
+                        if (!string.IsNullOrWhiteSpace(content) && content.Length >= 16)
+                        {
+                            return content;
+                        }
+                    }
+                }
+                catch { /* 忽略单个文件的错误，继续尝试下一个 */ }
+            }
+
+            try
+            {
+                var hostName = System.Net.Dns.GetHostName();
+                if (!string.IsNullOrWhiteSpace(hostName))
+                {
+                    return hostName;
+                }
+            }
+            catch { }
+
+            return null;
+        }
+
+        /// <summary>
+        /// 加密数据
+        /// </summary>
         public static byte[] Encrypt(byte[] plainData)
         {
-            var key = DeriveKey();
-            var nonce = RandomNumberGenerator.GetBytes(12);
+            if (plainData == null)
+                throw new ArgumentNullException(nameof(plainData));
 
-            using var aes = new AesGcm(key, 16);
-            var cipherData = new byte[plainData.Length];
-            var tag = new byte[16];
+            if (plainData.Length == 0)
+                return Array.Empty<byte>();
 
-            aes.Encrypt(nonce, plainData, cipherData, tag);
+            try
+            {
+                var key = DeriveKey();
+                var nonce = RandomNumberGenerator.GetBytes(12);
 
-            var result = new byte[12 + 16 + cipherData.Length];
-            Buffer.BlockCopy(nonce, 0, result, 0, 12);
-            Buffer.BlockCopy(tag, 0, result, 12, 16);
-            Buffer.BlockCopy(cipherData, 0, result, 28, cipherData.Length);
-            return result;
+                using var aes = new AesGcm(key, 16);
+                var cipherData = new byte[plainData.Length];
+                var tag = new byte[16];
+
+                aes.Encrypt(nonce, plainData, cipherData, tag);
+
+                // 组合: nonce(12) + tag(16) + ciphertext
+                var result = new byte[12 + 16 + cipherData.Length];
+                Buffer.BlockCopy(nonce, 0, result, 0, 12);
+                Buffer.BlockCopy(tag, 0, result, 12, 16);
+                Buffer.BlockCopy(cipherData, 0, result, 28, cipherData.Length);
+                return result;
+            }
+            catch (CryptographicException ex)
+            {
+                throw new InvalidOperationException("Encryption failed", ex);
+            }
         }
 
+        /// <summary>
+        /// 解密数据
+        /// </summary>
         public static byte[] Decrypt(byte[] encryptedData)
         {
-            var key = DeriveKey();
-            var nonce = new byte[12];
-            var tag = new byte[16];
-            var cipherData = new byte[encryptedData.Length - 28];
+            if (encryptedData == null)
+                throw new ArgumentNullException(nameof(encryptedData));
 
-            Buffer.BlockCopy(encryptedData, 0, nonce, 0, 12);
-            Buffer.BlockCopy(encryptedData, 12, tag, 0, 16);
-            Buffer.BlockCopy(encryptedData, 28, cipherData, 0, cipherData.Length);
+            if (encryptedData.Length == 0)
+                return Array.Empty<byte>();
 
-            using var aes = new AesGcm(key, 16);
-            var plainData = new byte[cipherData.Length];
-            aes.Decrypt(nonce, cipherData, tag, plainData);
-            return plainData;
+            if (encryptedData.Length < 28)
+                throw new ArgumentException(
+                    "Invalid encrypted data format. Data too short.",
+                    nameof(encryptedData));
+
+            try
+            {
+                var key = DeriveKey();
+                var nonce = new byte[12];
+                var tag = new byte[16];
+                var cipherData = new byte[encryptedData.Length - 28];
+
+                Buffer.BlockCopy(encryptedData, 0, nonce, 0, 12);
+                Buffer.BlockCopy(encryptedData, 12, tag, 0, 16);
+                Buffer.BlockCopy(encryptedData, 28, cipherData, 0, cipherData.Length);
+
+                using var aes = new AesGcm(key, 16);
+                var plainData = new byte[cipherData.Length];
+                aes.Decrypt(nonce, cipherData, tag, plainData);
+                return plainData;
+            }
+            catch (CryptographicException ex)
+            {
+                throw new InvalidOperationException(
+                    "Decryption failed. The configuration file may be corrupted or was created on a different machine.",
+                    ex);
+            }
         }
+
     }
 }

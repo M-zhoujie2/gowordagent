@@ -7,7 +7,10 @@
 }
 
 body {
-    font-family: "Microsoft YaHei", "SimHei", sans-serif;
+    /* 银河麒麟 V10 字体回退链 */
+    font-family: "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei",
+                 "Noto Sans SC", "Liberation Sans", "DejaVu Sans",
+                 "Microsoft YaHei", "SimHei", sans-serif;
     font-size: 13px;
     line-height: 1.5;
     color: #333;
@@ -223,13 +226,6 @@ body {
 .issue-reason {
     font-size: 12px;
     color: #666;
-}
-
-/* 空状态 */
-.empty-state {
-    text-align: center;
-    padding: 40px 20px;
-    color: #999;
 }
 
 /* 滚动条 */

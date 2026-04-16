@@ -15,13 +15,17 @@ namespace GOWordAgentAddIn
     {
         public override string ProviderName => "Ollama(本地)";
 
-        public OllamaService(string apiUrl, string model = null)
-            : base(apiKey: null, apiUrl: apiUrl, model: model,
+        /// <summary>
+        /// Ollama 本地推理可能较慢，保留 5 分钟超时
+        /// </summary>
+        protected override int ProofreadTimeoutSeconds => 300;
+
+        public OllamaService(string apiUrl, string? model = null)
+            : base(apiKey: "", apiUrl: apiUrl, model: model,
                   defaultApiUrl: "http://localhost:11434/api/chat",
                   defaultModel: "llama2")
         {
-            // Ollama 不需要 API Key，移除 Authorization 头
-            _httpClient.DefaultRequestHeaders.Remove("Authorization");
+            // Ollama 不需要 API Key，SharedHttpClientFactory 在 apiKey 为空时不会添加 Authorization
         }
 
         protected override string BuildRequestBody(List<object> messages)

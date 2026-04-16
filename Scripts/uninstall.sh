@@ -10,7 +10,17 @@ systemctl --user daemon-reload 2>/dev/null || true
 
 # 删除文件
 sudo rm -rf /opt/gowordagent
+rm -rf $HOME/.local/opt/gowordagent
 rm -rf $HOME/.local/share/Kingsoft/wps/jsaddons/com.gowordagent.addin
+rm -rf $HOME/.config/Kingsoft/wps/jsaddons/com.gowordagent.addin
+
+# 删除端口文件（兼容新旧路径）
+RUNTIME_PORT_FILE="${XDG_RUNTIME_DIR:-}/gowordagent-port-$USER.json"
+rm -f "$RUNTIME_PORT_FILE"
+rm -f /tmp/gowordagent-port.json
+rm -f /tmp/gowordagent-port-$USER.json
+rm -f /tmp/gowordagent-port-*.json
+rm -f $HOME/.config/gowordagent/service-port.json
 
 # 询问是否删除配置
 echo ""

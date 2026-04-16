@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using GOWordAgentAddIn.Models;
@@ -11,19 +10,26 @@ using GOWordAgentAddIn.Models;
 namespace GOWordAgentAddIn
 {
     /// <summary>
-    /// 校对服务 - 支持并发、缓存
+    /// 校对服务 - 支持并发、缓存、部分结果保留和全局取消
     /// </summary>
     public class ProofreadService : IDisposable
     {
         private readonly ILLMService _llmService;
         private readonly string _systemPrompt;
         private readonly int _concurrency;
-        private readonly SemaphoreSlim _semaphore;
         private readonly string _proofreadMode;
         private readonly DocumentSegmenter _segmenter;
         private int _cacheHitCount = 0;
         private readonly CancellationTokenSource _disposeCts = new CancellationTokenSource();
-        private long _activeTaskCount = 0;
+
+        // 全局取消：用于服务端主动中断所有正在进行的校对（单用户本地服务场景）
+        private static CancellationTokenSource _globalCancelCts = new CancellationTokenSource();
+        private static readonly object _globalCancelLock = new object();
+
+        // 进度节流
+        private DateTime _lastProgressUpdate = DateTime.MinValue;
+        private readonly TimeSpan _progressThrottleInterval = TimeSpan.FromMilliseconds(200);
+        private readonly object _progressLock = new object();
 
         public event EventHandler<ProofreadProgressArgs>? OnProgress;
 
@@ -32,16 +38,41 @@ namespace GOWordAgentAddIn
             _llmService = llmService ?? throw new ArgumentNullException(nameof(llmService));
             _systemPrompt = systemPrompt ?? throw new ArgumentNullException(nameof(systemPrompt));
             _concurrency = Math.Max(1, Math.Min(concurrency, 10));
-            _semaphore = new SemaphoreSlim(_concurrency);
             _segmenter = new DocumentSegmenter(segmenterConfig);
             _proofreadMode = proofreadMode ?? "精准校验";
         }
 
-        public async Task<List<ParagraphResult>> ProofreadDocumentAsync(string documentText, CancellationToken cancellationToken = default)
+        public static void CancelAll()
+        {
+            lock (_globalCancelLock)
+            {
+                if (!_globalCancelCts.IsCancellationRequested)
+                {
+                    try { _globalCancelCts.Cancel(); }
+                    catch (ObjectDisposedException) { }
+                }
+            }
+        }
+
+        public static void ResetGlobalCancellation()
+        {
+            lock (_globalCancelLock)
+            {
+                if (_globalCancelCts.IsCancellationRequested)
+                {
+                    var old = _globalCancelCts;
+                    _globalCancelCts = new CancellationTokenSource();
+                    try { old.Dispose(); }
+                    catch { }
+                }
+            }
+        }
+
+        public async Task<List<ParagraphResult>> ProofreadDocumentAsync(string? documentText, CancellationToken cancellationToken = default)
         {
             Debug.WriteLine($"[ProofreadDocumentAsync] 开始文档校对，文档长度={documentText?.Length ?? 0}");
 
-            var paragraphs = _segmenter.SplitIntoParagraphs(documentText);
+            var paragraphs = _segmenter.SplitIntoParagraphs(documentText ?? "");
             var totalCount = paragraphs.Count;
 
             if (totalCount == 0)
@@ -49,69 +80,107 @@ namespace GOWordAgentAddIn
                 return new List<ParagraphResult>();
             }
 
-            var results = new List<ParagraphResult>(new ParagraphResult[totalCount]);
+            var results = new ParagraphResult[totalCount];
             var completedCount = 0;
+            var failedCount = 0;
             var lockObj = new object();
             var stopwatch = Stopwatch.StartNew();
 
-            var pendingTasks = new List<Task<ParagraphResult>>();
-            for (int i = 0; i < paragraphs.Count; i++)
+            var indexedParagraphs = paragraphs.Select((text, i) => (Text: text, Index: i)).ToList();
+
+            CancellationTokenSource? requestCts = null;
+            try
             {
-                var index = i;
-                var para = paragraphs[i];
+                // 链接三个取消源：HTTP 请求取消、服务实例 Dispose、全局取消
+                requestCts = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken, _disposeCts.Token, _globalCancelCts.Token);
 
-                var task = Task.Run(async () =>
-                {
-                    return await ProcessParagraphAsync(para, index, totalCount, cancellationToken);
-                }, cancellationToken);
+                await Parallel.ForEachAsync(
+                    indexedParagraphs,
+                    new ParallelOptions
+                    {
+                        MaxDegreeOfParallelism = _concurrency,
+                        CancellationToken = requestCts.Token
+                    },
+                    async (item, ct) =>
+                    {
+                        ParagraphResult result;
+                        try
+                        {
+                            result = await ProcessParagraphAsync(item.Text, item.Index, totalCount, ct).ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            throw; // 取消需要冒泡，避免继续浪费资源
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[ProofreadService] 段落 {item.Index + 1} 处理失败: {ex.Message}");
+                            result = new ParagraphResult
+                            {
+                                Index = item.Index,
+                                OriginalText = item.Text,
+                                ResultText = $"处理失败: {ex.Message}",
+                                IsCompleted = false,
+                                IsCached = false,
+                                ProcessTime = DateTime.UtcNow,
+                                ElapsedMs = 0,
+                                Items = new List<ProofreadIssueItem>()
+                            };
+                        }
 
-                pendingTasks.Add(task);
+                        lock (lockObj)
+                        {
+                            results[result.Index] = result;
+                            if (result.IsCompleted)
+                            {
+                                completedCount++;
+                                if (result.IsCached)
+                                    System.Threading.Interlocked.Increment(ref _cacheHitCount);
+                            }
+                            else
+                            {
+                                failedCount++;
+                            }
+                        }
+
+                        var estimatedRemaining = CalculateEstimatedRemaining(
+                            completedCount + failedCount, totalCount, stopwatch.Elapsed);
+
+                        try
+                        {
+                            var statusMsg = result.IsCompleted
+                                ? (result.IsCached ? $"第 {result.Index + 1} 段（缓存）" : $"第 {result.Index + 1} 段完成")
+                                : $"第 {result.Index + 1} 段失败";
+                            ReportProgressThrottled(totalCount, completedCount + failedCount, result.Index,
+                                statusMsg, result, false, estimatedRemaining);
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[ProofreadService] 报告进度时出错: {ex.Message}");
+                        }
+                    }).ConfigureAwait(false);
             }
-
-            while (pendingTasks.Count > 0)
+            finally
             {
-                var completedTask = await Task.WhenAny(pendingTasks).ConfigureAwait(false);
-                pendingTasks.Remove(completedTask);
-
-                var result = await completedTask;
-
-                lock (lockObj)
-                {
-                    results[result.Index] = result;
-                    completedCount++;
-
-                    if (result.IsCached)
-                        System.Threading.Interlocked.Increment(ref _cacheHitCount);
-                }
-
-                var estimatedRemaining = CalculateEstimatedRemaining(completedCount, totalCount, stopwatch.Elapsed);
-
-                try
-                {
-                    ReportProgress(totalCount, completedCount, result.Index,
-                        result.IsCached ? $"第 {result.Index + 1} 段（缓存）" : $"第 {result.Index + 1} 段完成",
-                        result, false, estimatedRemaining);
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[ProofreadService] 报告进度时出错: {ex.Message}");
-                }
+                requestCts?.Dispose();
             }
 
             stopwatch.Stop();
 
             try
             {
-                ReportProgress(totalCount, totalCount, -1,
-                    $"校对完成（耗时 {stopwatch.Elapsed.TotalSeconds:F1} 秒）",
-                    null, true, 0);
+                var finalStatus = failedCount > 0
+                    ? $"校对完成（耗时 {stopwatch.Elapsed.TotalSeconds:F1} 秒，{failedCount} 段失败）"
+                    : $"校对完成（耗时 {stopwatch.Elapsed.TotalSeconds:F1} 秒）";
+                ReportProgress(totalCount, totalCount, -1, finalStatus, null, true, 0);
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[ProofreadService] 报告完成时出错: {ex.Message}");
             }
 
-            Debug.WriteLine($"[ProofreadDocumentAsync] 校对完成，总耗时={stopwatch.Elapsed.TotalSeconds:F1}秒");
+            Debug.WriteLine($"[ProofreadDocumentAsync] 校对完成，总耗时={stopwatch.Elapsed.TotalSeconds:F1}秒，失败段落={failedCount}");
 
             return results.ToList();
         }
@@ -119,62 +188,56 @@ namespace GOWordAgentAddIn
         private async Task<ParagraphResult> ProcessParagraphAsync(string paragraph, int index, int total,
             CancellationToken cancellationToken)
         {
+            // 检查是否已释放
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(ProofreadService));
+
             using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _disposeCts.Token))
             {
                 var linkedToken = linkedCts.Token;
-                await _semaphore.WaitAsync(linkedToken);
-
-                System.Threading.Interlocked.Increment(ref _activeTaskCount);
                 var stopwatch = Stopwatch.StartNew();
+
+                Debug.WriteLine($"[ProofreadService] 开始处理段落 {index + 1}/{total}, 长度={paragraph.Length}");
+
+                if (ProofreadCacheManager.TryGetCachedResult(paragraph, index, out var cachedResult, _proofreadMode))
+                {
+                    stopwatch.Stop();
+                    return cachedResult!;
+                }
 
                 try
                 {
-                    Debug.WriteLine($"[ProofreadService] 开始处理段落 {index + 1}/{total}, 长度={paragraph.Length}");
-
-                    if (ProofreadCacheManager.TryGetCachedResult(paragraph, index, out var cachedResult, _proofreadMode))
-                    {
-                        stopwatch.Stop();
-                        return cachedResult!;
-                    }
-
-                    try
-                    {
-                        ReportProgress(total, index, index, $"正在校对第 {index + 1}/{total} 段...", null, false, -1);
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"[ProofreadService] 报告进度时出错: {ex.Message}");
-                    }
-
-                    Debug.WriteLine($"[ProofreadService] 段落 {index + 1} 调用LLM...");
-                    var response = await _llmService.SendProofreadMessageAsync(_systemPrompt, paragraph);
-                    Debug.WriteLine($"[ProofreadService] 段落 {index + 1} LLM返回, 结果长度={response?.Length ?? 0}");
-
-                    var items = ProofreadIssueParser.ParseProofreadItems(response);
-
-                    var result = new ParagraphResult
-                    {
-                        Index = index,
-                        OriginalText = paragraph,
-                        ResultText = response,
-                        IsCompleted = true,
-                        IsCached = false,
-                        ProcessTime = DateTime.Now,
-                        ElapsedMs = stopwatch.ElapsedMilliseconds,
-                        Items = items
-                    };
-
-                    stopwatch.Stop();
-
-                    ProofreadCacheManager.StoreResult(paragraph, result, _proofreadMode);
-
-                    return result;
+                    // 使用节流的进度报告
+                    ReportProgressThrottled(total, index, index, $"正在校对第 {index + 1}/{total} 段...", null, false, -1);
                 }
-                finally
+                catch (Exception ex)
                 {
-                    _semaphore.Release();
-                    System.Threading.Interlocked.Decrement(ref _activeTaskCount);
+                    Debug.WriteLine($"[ProofreadService] 报告进度时出错: {ex.Message}");
                 }
+
+                Debug.WriteLine($"[ProofreadService] 段落 {index + 1} 调用LLM...");
+                var response = await _llmService.SendProofreadMessageAsync(_systemPrompt, paragraph, linkedToken);
+                Debug.WriteLine($"[ProofreadService] 段落 {index + 1} LLM返回, 结果长度={response?.Length ?? 0}");
+
+                var items = ProofreadIssueParser.ParseProofreadItems(response ?? "");
+
+                var result = new ParagraphResult
+                {
+                    Index = index,
+                    OriginalText = paragraph,
+                    ResultText = response ?? "",
+                    IsCompleted = true,
+                    IsCached = false,
+                    ProcessTime = DateTime.UtcNow,
+                    ElapsedMs = stopwatch.ElapsedMilliseconds,
+                    Items = items
+                };
+
+                stopwatch.Stop();
+
+                ProofreadCacheManager.StoreResult(paragraph, result, _proofreadMode);
+
+                return result;
             }
         }
 
@@ -204,77 +267,35 @@ namespace GOWordAgentAddIn
             });
         }
 
-        public static string GenerateReport(List<ParagraphResult> results, int totalChars = 0, TimeSpan? elapsed = null, string? providerName = null)
+        /// <summary>
+        /// 节流的进度报告，避免过于频繁的 UI 更新
+        /// </summary>
+        private void ReportProgressThrottled(int total, int completed, int current, string status,
+            ParagraphResult? result, bool isCompleted, int estimatedRemaining = -1)
         {
-            var sb = new StringBuilder();
-            var now = DateTime.Now;
-
-            sb.AppendLine("# 校对报告");
-            sb.AppendLine();
-            sb.AppendLine("## 基本信息");
-
-            if (totalChars > 0)
-                sb.AppendLine($"- **字数**：{totalChars:N0}");
-
-            sb.AppendLine($"- **分块**：{results.Count} 块");
-
-            if (!string.IsNullOrEmpty(providerName))
-                sb.AppendLine($"- **校对模型**：{providerName}");
-
-            sb.AppendLine($"- **生成时间**：{now:yyyy-MM-dd HH:mm:ss}");
-
-            if (elapsed.HasValue)
-                sb.AppendLine($"- **耗时**：{elapsed.Value.TotalSeconds:F1} 秒");
-
-            sb.AppendLine();
-
-            int totalIssues = 0;
-            var allCategories = new Dictionary<string, int>();
-            int cachedCount = 0;
-
-            foreach (var result in results)
+            // 完成状态或错误状态总是报告
+            if (isCompleted || status.Contains("错误") || status.Contains("失败"))
             {
-                if (result == null) continue;
-
-                int issues = ProofreadIssueParser.CountIssues(result.ResultText);
-                totalIssues += issues;
-
-                var cats = ProofreadIssueParser.CategorizeIssues(result.ResultText);
-                foreach (var kv in cats)
+                lock (_progressLock)
                 {
-                    if (allCategories.ContainsKey(kv.Key))
-                        allCategories[kv.Key] += kv.Value;
-                    else
-                        allCategories[kv.Key] = kv.Value;
+                    _lastProgressUpdate = DateTime.Now;
                 }
-
-                if (result.IsCached)
-                    cachedCount++;
+                ReportProgress(total, completed, current, status, result, isCompleted, estimatedRemaining);
+                return;
             }
 
-            sb.AppendLine("## 统计汇总");
-            sb.AppendLine();
-            sb.AppendLine($"### 发现问题（共 {totalIssues} 处）");
-
-            if (allCategories.Count > 0)
+            // 检查是否需要节流
+            lock (_progressLock)
             {
-                foreach (var kv in allCategories.OrderByDescending(x => x.Value))
+                var now = DateTime.Now;
+                if (now - _lastProgressUpdate < _progressThrottleInterval)
                 {
-                    sb.AppendLine($"- {kv.Key}：{kv.Value} 处");
+                    return; // 跳过这次更新
                 }
-            }
-            else
-            {
-                sb.AppendLine("- 未发现明显错误");
+                _lastProgressUpdate = now;
             }
 
-            if (cachedCount > 0)
-            {
-                sb.AppendLine();
-                sb.AppendLine($"（其中 {cachedCount} 段来自缓存）");
-            }
-
-            return sb.ToString();
+            ReportProgress(total, completed, current, status, result, isCompleted, estimatedRemaining);
         }
 
         public static void ClearCache()
@@ -297,21 +318,38 @@ namespace GOWordAgentAddIn
             GC.SuppressFinalize(this);
         }
 
+        /// <summary>
+        /// 请求取消所有正在进行的任务（异步，不等待）
+        /// </summary>
+        public void RequestCancel()
+        {
+            try
+            {
+                _disposeCts?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // 忽略已释放的情况
+            }
+        }
+
         protected virtual void Dispose(bool disposing)
         {
             if (!_disposed)
             {
                 if (disposing)
                 {
-                    _disposeCts?.Cancel();
-
-                    var sw = Stopwatch.StartNew();
-                    while (sw.ElapsedMilliseconds < 5000 && System.Threading.Interlocked.Read(ref _activeTaskCount) > 0)
+                    // 只发送取消信号，不等待任务完成
+                    // 避免阻塞请求响应
+                    try
                     {
-                        Thread.Sleep(50);
+                        _disposeCts?.Cancel();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // 忽略
                     }
 
-                    _semaphore?.Dispose();
                     _disposeCts?.Dispose();
                 }
 

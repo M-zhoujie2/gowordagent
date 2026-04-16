@@ -48,10 +48,6 @@ namespace GOWordAgentAddIn.Models
         /// </summary>
         public List<ProofreadIssueItem> Items { get; set; } = new List<ProofreadIssueItem>();
         
-        /// <summary>
-        /// 相似度分数（用于语义缓存）
-        /// </summary>
-        public double SimilarityScore { get; set; }
     }
 
     /// <summary>
@@ -121,16 +117,6 @@ namespace GOWordAgentAddIn.Models
         /// 在文档中的结束位置（仅作为缓存，多修订后可能偏移）
         /// </summary>
         public int DocumentEnd { get; set; }
-    }
-
-    /// <summary>
-    /// AI 服务商列表项
-    /// </summary>
-    public class ProviderItem
-    {
-        public AIProvider Provider { get; set; }
-        public string Name { get; set; } = "";
-        public override string ToString() => Name;
     }
 
     /// <summary>

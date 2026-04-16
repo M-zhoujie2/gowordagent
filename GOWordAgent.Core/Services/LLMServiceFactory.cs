@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using GOWordAgentAddIn.Models;
 
 namespace GOWordAgentAddIn
 {
@@ -8,7 +9,7 @@ namespace GOWordAgentAddIn
     /// </summary>
     public static class LLMServiceFactory
     {
-        public static ILLMService CreateService(AIProvider provider, string apiKey, string apiUrl = null, string model = null)
+        public static ILLMService CreateService(AIProvider provider, string apiKey, string? apiUrl = null, string? model = null)
         {
             switch (provider)
             {
@@ -17,20 +18,10 @@ namespace GOWordAgentAddIn
                 case AIProvider.GLM:
                     return new GLMService(apiKey, apiUrl, model);
                 case AIProvider.Ollama:
-                    return new OllamaService(apiUrl ?? "http://localhost:11434", apiKey);
+                    return new OllamaService(apiUrl ?? "http://localhost:11434", model);
                 default:
                     throw new ArgumentException($"不支持的 AI 提供商: {provider}");
             }
-        }
-
-        public static Dictionary<AIProvider, string> GetProviders()
-        {
-            return new Dictionary<AIProvider, string>
-            {
-                { AIProvider.DeepSeek, "DeepSeek" },
-                { AIProvider.GLM, "智谱 AI (GLM)" },
-                { AIProvider.Ollama, "本地 Ollama" }
-            };
         }
 
         public static string GetDefaultApiUrl(AIProvider provider)

@@ -12,6 +12,12 @@ var ProofreadWorkflow = {
     discoverAndConnect: function() {
         var self = this;
 
+        // 应用手动端口配置（如果用户填写了）
+        var config = UIController.getConfig();
+        if (config.manualPort > 0) {
+            ApiClient.defaultPort = config.manualPort;
+        }
+
         // 尝试发现服务
         if (!ApiClient.discoverService()) {
             UIController.setConnected(false);
@@ -35,12 +41,18 @@ var ProofreadWorkflow = {
             console.log('Connected to backend');
             self.connected = true;
             UIController.setConnected(true);
+            UIController.hideCancelBtn();
         });
     },
 
     connect: function() {
         var config = UIController.getConfig();
         var self = this;
+
+        // 应用手动端口配置
+        if (config.manualPort > 0) {
+            ApiClient.defaultPort = config.manualPort;
+        }
 
         UIController.setProgress('正在保存配置...');
 
@@ -99,6 +111,7 @@ var ProofreadWorkflow = {
         UIController.showResults();
         UIController.setProgress('正在准备校对...');
         document.getElementById('btn-proofread').disabled = true;
+        UIController.showCancelBtn();
 
         var requestData = {
             text: '',
@@ -110,14 +123,15 @@ var ProofreadWorkflow = {
 
         ApiClient.proofread(requestData, function(err, response) {
             document.getElementById('btn-proofread').disabled = false;
+            UIController.hideCancelBtn();
 
             if (err) {
                 UIController.setProgress('校对失败: ' + err.message);
                 return;
             }
 
-            if (!response.success) {
-                UIController.setProgress('校对失败');
+            if (!response || !response.success) {
+                UIController.setProgress('校对失败: ' + (response ? '未知错误' : '无响应'));
                 return;
             }
 
@@ -131,6 +145,20 @@ var ProofreadWorkflow = {
 
             // 应用修订到文档
             self.applyRevisions(issues);
+        });
+    },
+
+    cancelProofread: function() {
+        var self = this;
+        UIController.setProgress('正在取消校对...');
+        ApiClient.cancel(function(err, data) {
+            if (err) {
+                console.error('Cancel failed:', err);
+                UIController.setProgress('取消失败: ' + err.message);
+                return;
+            }
+            UIController.setProgress('已发送取消请求');
+            UIController.hideCancelBtn();
         });
     },
 
